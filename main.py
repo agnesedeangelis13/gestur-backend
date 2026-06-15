@@ -7,7 +7,8 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import datetime, timedelta
 import os
 from dotenv import load_dotenv
-
+from weather_service import aggiorna_meteo_tutti_siti
+from festivita_service import popola_festivita
 load_dotenv()
 
 app = FastAPI()
@@ -79,3 +80,32 @@ def aggiorna_tutte():
         return {"risultati": risultati}
     except Exception as e:
         return {"errore": str(e)}
+    
+
+# ---- METEO ----
+@app.post("/meteo/aggiorna")
+async def aggiorna_meteo():
+    risultati = await aggiorna_meteo_tutti_siti()
+    return {"risultati": risultati}
+
+# ---- EVENTI LOCALI ----
+@app.get("/eventi/{sito_id}")
+def get_eventi(sito_id: int):
+    data = supabase.table("eventi_locali").select("*").eq("sito_id", sito_id).order("data_inizio").execute()
+    return data.data
+
+@app.post("/eventi")
+def crea_evento(payload: dict):
+    supabase.table("eventi_locali").insert(payload).execute()
+    return {"status": "creato"}
+
+@app.delete("/eventi/{evento_id}")
+def elimina_evento(evento_id: int):
+    supabase.table("eventi_locali").delete().eq("id", evento_id).execute()
+    return {"status": "eliminato"}
+
+# ---- FESTIVITA ----
+@app.post("/festivita/popola/{anno}")
+def popola_festivita_anno(anno: int):
+    n = popola_festivita(anno)
+    return {"records_inseriti": n}
