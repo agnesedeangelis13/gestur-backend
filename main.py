@@ -9,6 +9,7 @@ import os
 from dotenv import load_dotenv
 from weather_service import aggiorna_meteo_tutti_siti
 from festivita_service import popola_festivita
+from alert_service import invia_alert_previsioni
 load_dotenv()
 
 app = FastAPI()
@@ -28,7 +29,6 @@ def genera_variabili_esogene(date_range, sito_id=None, regione="Lazio"):
     exog = []
     date_str = [d.strftime("%Y-%m-%d") for d in date_range]
 
-    # Festività da Supabase
     try:
         fest = supabase.table("festivita_regionali").select("data") \
             .eq("regione", regione).in_("data", date_str).execute()
@@ -36,7 +36,6 @@ def genera_variabili_esogene(date_range, sito_id=None, regione="Lazio"):
     except:
         date_festivita = set()
 
-    # Meteo da Supabase
     meteo_map = {}
     if sito_id:
         try:
@@ -48,7 +47,6 @@ def genera_variabili_esogene(date_range, sito_id=None, regione="Lazio"):
         except:
             pass
 
-    # Eventi locali da Supabase
     eventi_map = {}
     if sito_id:
         try:
@@ -111,13 +109,13 @@ def previsioni(sito_id: str, settimane: int = 4, regione: str = "Lazio"):
         return {"errore": str(e)}
 
 @app.get("/aggiorna-previsioni")
-def aggiorna_tutte():
+async def aggiorna_tutte():
     try:
-        siti = supabase.table("siti_culturali").select("id, comune_id").execute()
+        siti = supabase.table("siti_culturali").select("id, nome_sito, comune_id").execute()
         risultati = []
         for sito in siti.data:
             sito_id = sito["id"]
-            comune = sito.get("comune_id", "Lazio")
+            nome_sito = sito.get("nome_sito", f"Sito {sito_id}")
             prev = previsioni(str(sito_id), regione="Lazio")
             if "previsioni" in prev:
                 for p in prev["previsioni"]:
@@ -127,6 +125,15 @@ def aggiorna_tutte():
                         "affluenza_stimata": p["presenze_previste"],
                         "aggiornato_il": datetime.now().isoformat()
                     }).execute()
+
+                # Recupera destinatari da Supabase
+                utenti = supabase.table("utenti").select("email, ruolo") \
+                    .in_("ruolo", ["admin", "comune"]).execute()
+                destinatari = [u["email"] for u in utenti.data if u.get("email")]
+
+                if destinatari:
+                    await invia_alert_previsioni(nome_sito, prev["previsioni"], destinatari)
+
             risultati.append({"sito_id": sito_id, "stato": "ok"})
         return {"risultati": risultati}
     except Exception as e:
