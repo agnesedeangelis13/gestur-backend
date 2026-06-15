@@ -86,14 +86,14 @@ def root():
 @app.get("/previsioni/{sito_id}")
 def previsioni(sito_id: str, settimane: int = 4, regione: str = "Lazio"):
     try:
-        response = supabase.table("presenze").select("*").eq("sito_id", sito_id).order("data").execute()
+        response = supabase.table("presenza").select("*").eq("sito_id", sito_id).order("data").execute()
         dati = response.data
         if not dati or len(dati) < 10:
             return {"errore": "Dati insufficienti"}
         df = pd.DataFrame(dati)
         df["data"] = pd.to_datetime(df["data"])
         df = df.sort_values("data").set_index("data")
-        serie = df["presenze"].asfreq("W").fillna(df["presenze"].mean())
+        serie = df["gruppo"].asfreq("W").fillna(df["gruppo"].mean())
         exog_train = genera_variabili_esogene(serie.index, sito_id=sito_id, regione=regione)
         modello = SARIMAX(serie, exog=exog_train, order=(1,1,1), seasonal_order=(1,1,1,52),
                           enforce_stationarity=False, enforce_invertibility=False)
@@ -126,7 +126,6 @@ async def aggiorna_tutte():
                         "aggiornato_il": datetime.now().isoformat()
                     }).execute()
 
-                # Recupera destinatari da Supabase
                 utenti = supabase.table("utenti").select("email, ruolo") \
                     .in_("ruolo", ["admin", "comune"]).execute()
                 destinatari = [u["email"] for u in utenti.data if u.get("email")]
