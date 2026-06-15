@@ -1,8 +1,9 @@
 import os
 import httpx
 from datetime import datetime
-
+print(f"Invio email a: {destinatari}")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+
 
 async def invia_alert_previsioni(sito_nome: str, previsioni: list, destinatari: list):
     """Invia email di alert con le previsioni SARIMAX."""
