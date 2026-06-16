@@ -223,3 +223,24 @@ def simula_scenario(payload: dict):
     except Exception as e:
         print(f"Errore simulazione: {e}")
         return {"errore": str(e)}
+
+        # ---- REVENUE FORECASTING ----
+@app.get("/tariffe/{sito_id}")
+def get_tariffe(sito_id: int):
+    try:
+        data = supabase.table("siti_culturali").select(
+            "nome_sito, prezzo_biglietto, prezzo_ridotto, percentuale_ridotti, "
+            "percentuale_bookshop, spesa_media_bookshop, "
+            "percentuale_ristorazione, spesa_media_ristorazione"
+        ).eq("id", sito_id).single().execute()
+        return data.data
+    except Exception as e:
+        return {"errore": str(e)}
+
+@app.put("/tariffe/{sito_id}")
+def aggiorna_tariffe(sito_id: int, payload: dict):
+    try:
+        supabase.table("siti_culturali").update(payload).eq("id", sito_id).execute()
+        return {"status": "aggiornato"}
+    except Exception as e:
+        return {"errore": str(e)}
