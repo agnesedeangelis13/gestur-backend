@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
@@ -88,7 +89,9 @@ def previsioni(sito_id: str, settimane: int = 4, regione: str = "Lazio"):
     try:
         response = supabase.table("presenza").select("*").eq("sito_id", sito_id).order("data").execute()
         dati = response.data
+        print(f"Dati trovati per sito {sito_id}: {len(dati)}")
         if not dati or len(dati) < 10:
+            print(f"Dati insufficienti per sito {sito_id}: {len(dati)} record")
             return {"errore": "Dati insufficienti"}
         df = pd.DataFrame(dati)
         df["data"] = pd.to_datetime(df["data"])
@@ -104,19 +107,24 @@ def previsioni(sito_id: str, settimane: int = 4, regione: str = "Lazio"):
         previsioni_raw = risultato.forecast(steps=settimane, exog=exog_future)
         output = [{"data": d.strftime("%Y-%m-%d"), "presenze_previste": max(0, round(float(v)))}
                   for d, v in zip(date_future, previsioni_raw)]
+        print(f"Previsioni generate per sito {sito_id}: {len(output)} settimane")
         return {"sito_id": sito_id, "previsioni": output}
     except Exception as e:
+        print(f"Errore previsioni sito {sito_id}: {e}")
         return {"errore": str(e)}
 
 @app.get("/aggiorna-previsioni")
 async def aggiorna_tutte():
     try:
         siti = supabase.table("siti_culturali").select("id, nome_sito, comune_id").execute()
+        print(f"Siti trovati: {len(siti.data)}")
         risultati = []
         for sito in siti.data:
             sito_id = sito["id"]
             nome_sito = sito.get("nome_sito", f"Sito {sito_id}")
+            print(f"Elaboro sito {sito_id} - {nome_sito}")
             prev = previsioni(str(sito_id), regione="Lazio")
+            print(f"Risultato previsioni sito {sito_id}: {prev}")
             if "previsioni" in prev:
                 for p in prev["previsioni"]:
                     supabase.table("previsioni_affluenza").upsert({
@@ -129,6 +137,7 @@ async def aggiorna_tutte():
                 utenti = supabase.table("utenti").select("email, ruolo") \
                     .in_("ruolo", ["admin", "comune"]).execute()
                 destinatari = [u["email"] for u in utenti.data if u.get("email")]
+                print(f"Destinatari email: {destinatari}")
 
                 if destinatari:
                     await invia_alert_previsioni(nome_sito, prev["previsioni"], destinatari)
@@ -136,6 +145,7 @@ async def aggiorna_tutte():
             risultati.append({"sito_id": sito_id, "stato": "ok"})
         return {"risultati": risultati}
     except Exception as e:
+        print(f"Errore aggiorna_tutte: {e}")
         return {"errore": str(e)}
 
 # ---- METEO ----
