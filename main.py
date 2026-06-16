@@ -175,3 +175,51 @@ def elimina_evento(evento_id: int):
 def popola_festivita_anno(anno: int):
     n = popola_festivita(anno)
     return {"records_inseriti": n}
+
+    # ---- SIMULATORE SCENARI ----
+@app.post("/simula-scenario")
+def simula_scenario(payload: dict):
+    try:
+        sito_id = payload.get("sito_id")
+        settimane = payload.get("settimane", 8)
+        scenario = payload.get("scenario", {})
+
+        response = supabase.table("presenza").select("*").eq("sito_id", sito_id).order("data").execute()
+        dati = response.data
+        if not dati or len(dati) < 10:
+            return {"errore": "Dati insufficienti"}
+
+        df = pd.DataFrame(dati)
+        df["data"] = pd.to_datetime(df["data"])
+        df = df.sort_values("data").set_index("data")
+        serie = df["gruppo"].asfreq("W").fillna(df["gruppo"].mean())
+
+        exog_train = genera_variabili_esogene(serie.index, sito_id=sito_id, regione="Lazio")
+        modello = SARIMAX(serie, exog=exog_train, order=(1,1,1), seasonal_order=(1,1,1,52),
+                          enforce_stationarity=False, enforce_invertibility=False)
+        risultato = modello.fit(disp=False)
+
+        ultima_data = serie.index[-1]
+        date_future = pd.date_range(start=ultima_data + timedelta(weeks=1), periods=settimane, freq="W")
+
+        # Costruisci esogene con valori dello scenario
+        exog_scenario = []
+        for data in date_future:
+            exog_scenario.append([
+                scenario.get("is_festivo", 0),
+                1 if data.month in [3,4,5] else 2 if data.month in [6,7,8] else 0 if data.month in [12,1,2] else 3,
+                scenario.get("temperatura", 20),
+                scenario.get("is_pioggia", 0),
+                scenario.get("impatto_evento", 0),
+                scenario.get("is_weekend", 0),
+            ])
+
+        exog_scenario = np.array(exog_scenario)
+        previsioni_raw = risultato.forecast(steps=settimane, exog=exog_scenario)
+        output = [{"data": d.strftime("%Y-%m-%d"), "presenze_previste": max(0, round(float(v)))}
+                  for d, v in zip(date_future, previsioni_raw)]
+
+        return {"sito_id": sito_id, "previsioni": output}
+    except Exception as e:
+        print(f"Errore simulazione: {e}")
+        return {"errore": str(e)}
