@@ -1,27 +1,28 @@
 import os
 import httpx
 from datetime import datetime
-print(f"Invio email a: {destinatari}")
+
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 
 
 async def invia_alert_previsioni(sito_nome: str, previsioni: list, destinatari: list):
     """Invia email di alert con le previsioni SARIMAX."""
     
+    print(f"Invio email a: {destinatari}")
+    
     # Costruisci tabella previsioni
     righe_html = ""
     for p in previsioni:
         data = p["data"]
         presenze = p["presenze_previste"]
-        # Colore in base al valore
         if presenze > 200:
-            colore = "#ffebee"  # rosso chiaro = picco alto
+            colore = "#ffebee"
             icona = "🔴"
         elif presenze < 20:
-            colore = "#fff3e0"  # arancio = calo
+            colore = "#fff3e0"
             icona = "🟡"
         else:
-            colore = "#f1f8e9"  # verde = normale
+            colore = "#f1f8e9"
             icona = "🟢"
         
         righe_html += f"""
@@ -78,4 +79,5 @@ async def invia_alert_previsioni(sito_nome: str, previsioni: list, destinatari: 
             json=payload,
             timeout=10
         )
+        print(f"Resend response: {resp.status_code} {resp.text}")
         return resp.json()
