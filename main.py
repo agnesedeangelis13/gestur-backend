@@ -244,3 +244,60 @@ def aggiorna_tariffe(sito_id: int, payload: dict):
         return {"status": "aggiornato"}
     except Exception as e:
         return {"errore": str(e)}
+
+        # ---- GENERAZIONE RELAZIONE ----
+@app.post("/genera-relazione")
+async def genera_relazione(payload: dict):
+    import httpx
+    try:
+        nome_sito = payload.get("nome_sito")
+        mese = payload.get("mese")
+        dati = payload.get("dati", {})
+
+        prompt = f"""Sei un esperto di gestione dei beni culturali italiani. Genera una relazione mensile professionale e istituzionale per il sito "{nome_sito}" relativa al mese di {mese}.
+
+Dati del mese:
+- Visitatori totali: {dati.get('totaleVisitatori', 0)}
+- Visitatori mese precedente: {dati.get('totalePrec', 0)}
+- Variazione percentuale: {dati.get('varPercent', 0)}%
+- Ricavi stimati: €{dati.get('ricaviTotali', 0)}
+- Condizione meteo prevalente: {dati.get('meteoPrev', 'non disponibile')}
+- Temperatura media: {dati.get('tempMedia', 'non disponibile')}°C
+- Top provenienza visitatori: {dati.get('topProv', [])}
+- Eventi del mese: {dati.get('eventi', [])}
+- Previsione visitatori prossimo mese: {dati.get('prevTotale', 0)}
+
+Struttura la relazione con queste sezioni:
+## SINTESI ESECUTIVA
+## ANALISI AFFLUENZA
+## ANALISI ECONOMICA
+## PROFILO DEI VISITATORI
+## FATTORI CONTESTUALI
+## PREVISIONI MESE SUCCESSIVO
+## RACCOMANDAZIONI STRATEGICHE
+
+Scrivi in italiano formale e istituzionale. Sii specifico con i numeri. Lunghezza: circa 600-800 parole."""
+
+        ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 2000,
+                    "messages": [{"role": "user", "content": prompt}]
+                },
+                timeout=60
+            )
+            risultato = resp.json()
+            testo = risultato["content"][0]["text"]
+
+        return {"testo": testo}
+    except Exception as e:
+        print(f"Errore generazione relazione: {e}")
+        return {"errore": str(e)}
