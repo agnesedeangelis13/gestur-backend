@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from supabase import create_client
@@ -87,28 +86,29 @@ def root():
 @app.get("/previsioni/{sito_id}")
 def previsioni(sito_id: str, settimane: int = 4, regione: str = "Lazio"):
     try:
-        response = supabase.table("presenza").select("*").eq("sito_id", sito_id).order("data").execute()
+        sito_id_int = int(sito_id)
+        response = supabase.table("presenza").select("*").eq("sito_id", sito_id_int).order("data").execute()
         dati = response.data
-        print(f"Dati trovati per sito {sito_id}: {len(dati)}")
+        print(f"Dati trovati per sito {sito_id_int}: {len(dati)}")
         if not dati or len(dati) < 10:
-            print(f"Dati insufficienti per sito {sito_id}: {len(dati)} record")
+            print(f"Dati insufficienti per sito {sito_id_int}: {len(dati)} record")
             return {"errore": "Dati insufficienti"}
         df = pd.DataFrame(dati)
         df["data"] = pd.to_datetime(df["data"])
         df = df.sort_values("data").set_index("data")
         serie = df["gruppo"].asfreq("W").fillna(df["gruppo"].mean())
-        exog_train = genera_variabili_esogene(serie.index, sito_id=sito_id, regione=regione)
+        exog_train = genera_variabili_esogene(serie.index, sito_id=sito_id_int, regione=regione)
         modello = SARIMAX(serie, exog=exog_train, order=(1,1,1), seasonal_order=(1,1,1,52),
                           enforce_stationarity=False, enforce_invertibility=False)
         risultato = modello.fit(disp=False)
         ultima_data = serie.index[-1]
         date_future = pd.date_range(start=ultima_data + timedelta(weeks=1), periods=settimane, freq="W")
-        exog_future = genera_variabili_esogene(date_future, sito_id=sito_id, regione=regione)
+        exog_future = genera_variabili_esogene(date_future, sito_id=sito_id_int, regione=regione)
         previsioni_raw = risultato.forecast(steps=settimane, exog=exog_future)
         output = [{"data": d.strftime("%Y-%m-%d"), "presenze_previste": max(0, round(float(v)))}
                   for d, v in zip(date_future, previsioni_raw)]
-        print(f"Previsioni generate per sito {sito_id}: {len(output)} settimane")
-        return {"sito_id": sito_id, "previsioni": output}
+        print(f"Previsioni generate per sito {sito_id_int}: {len(output)} settimane")
+        return {"sito_id": sito_id_int, "previsioni": output}
     except Exception as e:
         print(f"Errore previsioni sito {sito_id}: {e}")
         return {"errore": str(e)}
@@ -181,10 +181,11 @@ def popola_festivita_anno(anno: int):
 def simula_scenario(payload: dict):
     try:
         sito_id = payload.get("sito_id")
+        sito_id_int = int(sito_id)
         settimane = payload.get("settimane", 8)
         scenario = payload.get("scenario", {})
 
-        response = supabase.table("presenza").select("*").eq("sito_id", sito_id).order("data").execute()
+        response = supabase.table("presenza").select("*").eq("sito_id", sito_id_int).order("data").execute()
         dati = response.data
         if not dati or len(dati) < 10:
             return {"errore": "Dati insufficienti"}
@@ -194,7 +195,7 @@ def simula_scenario(payload: dict):
         df = df.sort_values("data").set_index("data")
         serie = df["gruppo"].asfreq("W").fillna(df["gruppo"].mean())
 
-        exog_train = genera_variabili_esogene(serie.index, sito_id=sito_id, regione="Lazio")
+        exog_train = genera_variabili_esogene(serie.index, sito_id=sito_id_int, regione="Lazio")
         modello = SARIMAX(serie, exog=exog_train, order=(1,1,1), seasonal_order=(1,1,1,52),
                           enforce_stationarity=False, enforce_invertibility=False)
         risultato = modello.fit(disp=False)
@@ -219,7 +220,7 @@ def simula_scenario(payload: dict):
         output = [{"data": d.strftime("%Y-%m-%d"), "presenze_previste": max(0, round(float(v)))}
                   for d, v in zip(date_future, previsioni_raw)]
 
-        return {"sito_id": sito_id, "previsioni": output}
+        return {"sito_id": sito_id_int, "previsioni": output}
     except Exception as e:
         print(f"Errore simulazione: {e}")
         return {"errore": str(e)}
