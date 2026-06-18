@@ -95,8 +95,8 @@ def previsioni(sito_id: str, settimane: int = 4, regione: str = "Lazio"):
             return {"errore": "Dati insufficienti"}
         df = pd.DataFrame(dati)
         df["data"] = pd.to_datetime(df["data"])
-        df = df.sort_values("data").set_index("data")
-        serie = df["gruppo"].asfreq("W").fillna(df["gruppo"].mean())
+        df = df.groupby("data", as_index=True)["gruppo"].sum().sort_index()
+        serie = df.asfreq("W").fillna(df.mean())
         exog_train = genera_variabili_esogene(serie.index, sito_id=sito_id_int, regione=regione)
         modello = SARIMAX(serie, exog=exog_train, order=(1,1,1), seasonal_order=(1,1,1,52),
                           enforce_stationarity=False, enforce_invertibility=False)
@@ -192,8 +192,8 @@ def simula_scenario(payload: dict):
 
         df = pd.DataFrame(dati)
         df["data"] = pd.to_datetime(df["data"])
-        df = df.sort_values("data").set_index("data")
-        serie = df["gruppo"].asfreq("W").fillna(df["gruppo"].mean())
+        df = df.groupby("data", as_index=True)["gruppo"].sum().sort_index()
+        serie = df.asfreq("W").fillna(df.mean())
 
         exog_train = genera_variabili_esogene(serie.index, sito_id=sito_id_int, regione="Lazio")
         modello = SARIMAX(serie, exog=exog_train, order=(1,1,1), seasonal_order=(1,1,1,52),
