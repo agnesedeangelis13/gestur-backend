@@ -433,6 +433,86 @@ def indice_autonomia(sito_id: str):
         print(f"Errore indice autonomia sito {sito_id}: {e}")
         return {"errore": str(e)}
 
+        # ---- PREDICTIVE BREAK-EVEN MATRIX ----
+@app.get("/break-even/{sito_id}")
+def break_even(sito_id: str):
+    try:
+        sito_id_int = int(sito_id)
+
+        sito_resp = supabase.table("siti_culturali").select("nome_sito, costo_fisso_settimanale").eq("id", sito_id_int).single().execute()
+        sito = sito_resp.data
+        if not sito:
+            return {"errore": "Sito non trovato"}
+
+        costo_fisso = sito.get("costo_fisso_settimanale") or 0
+        if costo_fisso <= 0:
+            return {"errore": "Costo fisso settimanale non impostato per questo sito"}
+
+        risultato_economico = previsioni_economiche(sito_id, giorni=7)
+        if "errore" in risultato_economico:
+            return {"errore": risultato_economico["errore"]}
+
+        previsioni_7gg = risultato_economico["previsioni"]
+        nomi_giorni = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
+
+        cumulativo = 0
+        giorno_pareggio = None
+        dettaglio_giorni = []
+
+        for p in previsioni_7gg:
+            cumulativo += p["margine_netto"]
+            giorno_settimana = pd.to_datetime(p["data"]).weekday()
+            raggiunto = cumulativo >= costo_fisso and giorno_pareggio is None
+            if raggiunto:
+                giorno_pareggio = {
+                    "data": p["data"],
+                    "nome_giorno": nomi_giorni[giorno_settimana],
+                    "indice_giorno": len(dettaglio_giorni)
+                }
+            dettaglio_giorni.append({
+                "data": p["data"],
+                "nome_giorno": nomi_giorni[giorno_settimana],
+                "margine_giorno": round(p["margine_netto"], 2),
+                "cumulativo": round(cumulativo, 2),
+                "pct_costo_coperto": round(min(cumulativo / costo_fisso, 1.5) * 100, 1),
+                "e_giorno_pareggio": raggiunto
+            })
+
+        profili_settimana = {}
+        for g in previsioni_7gg:
+            for p in g.get("top_profili", []):
+                profili_settimana[p["profilo"]] = profili_settimana.get(p["profilo"], 0) + p["quota_pct"]
+        profilo_trainante = max(profili_settimana.items(), key=lambda x: x[1])[0] if profili_settimana else "N/D"
+
+        if giorno_pareggio:
+            giorni_residui = 7 - giorno_pareggio["indice_giorno"] - 1
+            verdetto = (
+                f"Grazie all'alta concentrazione prevista di \"{profilo_trainante}\", "
+                f"il punto di pareggio aziendale verrà raggiunto {giorno_pareggio['nome_giorno'].lower()}. "
+                + (f"I successivi {giorni_residui} giorni di flussi saranno orientati al 100% di utile netto."
+                   if giorni_residui > 0 else "Il pareggio coincide con la fine della settimana.")
+            )
+        else:
+            mancante = round(costo_fisso - cumulativo, 2)
+            verdetto = (
+                f"Il punto di pareggio non viene raggiunto entro la settimana prevista. "
+                f"Mancano €{mancante:,.0f} per coprire i costi fissi, nonostante la presenza di \"{profilo_trainante}\".".replace(",", ".")
+            )
+
+        return {
+            "sito_id": sito_id_int,
+            "nome_sito": sito["nome_sito"],
+            "costo_fisso_settimanale": costo_fisso,
+            "giorno_pareggio": giorno_pareggio,
+            "profilo_trainante": profilo_trainante,
+            "verdetto": verdetto,
+            "dettaglio_giorni": dettaglio_giorni
+        }
+
+    except Exception as e:
+        print(f"Errore break-even sito {sito_id}: {e}")
+        return {"errore": str(e)}
+
         # ---- GENERAZIONE RELAZIONE ----
 @app.post("/genera-relazione")
 async def genera_relazione(payload: dict):
