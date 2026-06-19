@@ -377,6 +377,62 @@ def previsioni_economiche(sito_id: str, giorni: int = 14):
         print(f"Errore previsioni economiche sito {sito_id}: {e}")
         return {"errore": str(e)}
 
+        # ---- INDICE DI AUTONOMIA FINANZIARIA PREDITTIVA ----
+@app.get("/indice-autonomia/{sito_id}")
+def indice_autonomia(sito_id: str):
+    try:
+        sito_id_int = int(sito_id)
+
+        sito_resp = supabase.table("siti_culturali").select("nome_sito, costo_fisso_settimanale").eq("id", sito_id_int).single().execute()
+        sito = sito_resp.data
+        if not sito:
+            return {"errore": "Sito non trovato"}
+
+        costo_fisso = sito.get("costo_fisso_settimanale") or 0
+        if costo_fisso <= 0:
+            return {"errore": "Costo fisso settimanale non impostato per questo sito"}
+
+        risultato_economico = previsioni_economiche(sito_id, giorni=7)
+        if "errore" in risultato_economico:
+            return {"errore": risultato_economico["errore"]}
+
+        previsioni_7gg = risultato_economico["previsioni"]
+        ricavi_totali = sum(p["margine_netto"] for p in previsioni_7gg)
+        indice_pct = round((ricavi_totali / costo_fisso) * 100, 1)
+        surplus_deficit = round(ricavi_totali - costo_fisso, 2)
+
+        profili_settimana = {}
+        for g in previsioni_7gg:
+            for p in g.get("top_profili", []):
+                profili_settimana[p["profilo"]] = profili_settimana.get(p["profilo"], 0) + p["quota_pct"]
+        profilo_trainante = max(profili_settimana.items(), key=lambda x: x[1])[0] if profili_settimana else "N/D"
+
+        if indice_pct >= 100:
+            stato = "autofinanziamento"
+            verdetto = f"Il sito è in autofinanziamento, generando un surplus reinvestibile di €{abs(surplus_deficit):,.0f}.".replace(",", ".")
+        elif indice_pct >= 90:
+            stato = "equilibrio"
+            verdetto = f"Il sito è in equilibrio finanziario, con una variazione di €{surplus_deficit:,.0f} rispetto al pareggio.".replace(",", ".")
+        else:
+            stato = "sotto_soglia"
+            verdetto = f"Il sito è sotto la soglia di sostenibilità, con un deficit previsto di €{abs(surplus_deficit):,.0f}.".replace(",", ".")
+
+        return {
+            "sito_id": sito_id_int,
+            "nome_sito": sito["nome_sito"],
+            "indice_autonomia_pct": indice_pct,
+            "ricavi_previsti_7gg": round(ricavi_totali, 2),
+            "costo_fisso_settimanale": costo_fisso,
+            "surplus_deficit": surplus_deficit,
+            "stato": stato,
+            "profilo_trainante": profilo_trainante,
+            "verdetto": verdetto
+        }
+
+    except Exception as e:
+        print(f"Errore indice autonomia sito {sito_id}: {e}")
+        return {"errore": str(e)}
+
         # ---- GENERAZIONE RELAZIONE ----
 @app.post("/genera-relazione")
 async def genera_relazione(payload: dict):
