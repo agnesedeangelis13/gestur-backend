@@ -131,7 +131,7 @@ async def aggiorna_tutte():
                         "sito_id": sito_id,
                         "data_previsione": p["data"],
                         "affluenza_stimata": p["presenze_previste"],
-                        "generato_il": datetime.now().isoformat()
+                        "generata_il": datetime.now().isoformat()
                     }).execute()
 
                 utenti = supabase.table("utenti").select("email, ruolo") \
