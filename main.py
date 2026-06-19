@@ -246,6 +246,137 @@ def aggiorna_tariffe(sito_id: int, payload: dict):
     except Exception as e:
         return {"errore": str(e)}
 
+        # ---- PREVISORE BILANCIO STAGIONALE ----
+MACRO_PROVENIENZA = {
+    "Italia": "Italia",
+    "USA": "Nord America", "Canada": "Nord America",
+}
+
+def mappa_provenienza_macro(provenienza):
+    if provenienza in MACRO_PROVENIENZA:
+        return MACRO_PROVENIENZA[provenienza]
+    europa = ["Francia","Germania","Spagna","Regno Unito","Svizzera","Austria","Belgio","Paesi Bassi","Portogallo","Irlanda","Polonia","Svezia","Norvegia","Danimarca","Finlandia","Grecia","Russia","Ucraina","Romania","Ungheria","Repubblica Ceca","Croazia","Slovenia","Slovacchia","Bulgaria","Albania","Serbia","Montenegro","Bosnia ed Erzegovina","Macedonia del Nord","Kosovo","Moldova","Lituania","Lettonia","Estonia","Lussemburgo","Malta","Cipro","Islanda","Liechtenstein","Monaco","San Marino","Andorra"]
+    if provenienza in europa:
+        return "Europa"
+    return "Resto del mondo"
+
+def calcola_composizione_giorno(dati_storici, giorno_settimana):
+    righe_giorno = [r for r in dati_storici if pd.to_datetime(r["data"]).weekday() == giorno_settimana]
+    if not righe_giorno:
+        return []
+    composizione = {}
+    totale_persone = 0
+    for r in righe_giorno:
+        fasce = (r.get("fasce") or "").split(", ")
+        fasce = [f for f in fasce if f]
+        if not fasce:
+            continue
+        n_persone = r.get("gruppo", 0) or 0
+        tipo = r.get("tipo_visitatore") or "gruppo"
+        prov_macro = mappa_provenienza_macro(r.get("provenienza"))
+        per_fascia = n_persone / len(fasce)
+        for f in fasce:
+            chiave = (f, prov_macro, tipo)
+            composizione[chiave] = composizione.get(chiave, 0) + per_fascia
+            totale_persone += per_fascia
+    if totale_persone == 0:
+        return []
+    return [
+        {"fascia": k[0], "provenienza_macro": k[1], "tipo_visitatore": k[2], "quota": v / totale_persone}
+        for k, v in composizione.items()
+    ]
+
+@app.get("/previsioni-economiche/{sito_id}")
+def previsioni_economiche(sito_id: str, giorni: int = 14):
+    try:
+        sito_id_int = int(sito_id)
+
+        tariffe_resp = supabase.table("siti_culturali").select(
+            "nome_sito, prezzo_biglietto, prezzo_ridotto, percentuale_ridotti, "
+            "percentuale_bookshop, spesa_media_bookshop, "
+            "percentuale_ristorazione, spesa_media_ristorazione"
+        ).eq("id", sito_id_int).single().execute()
+        tariffe = tariffe_resp.data
+        if not tariffe:
+            return {"errore": "Sito non trovato"}
+
+        coeff_resp = supabase.table("coefficienti_spesa").select("*").eq("sito_id", sito_id_int).execute()
+        coefficienti = {(c["fascia"], c["provenienza_macro"], c["tipo_visitatore"]): c["coefficiente"] for c in coeff_resp.data}
+
+        novanta_giorni_fa = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        storico_resp = supabase.table("presenza").select("data, gruppo, fasce, provenienza, tipo_visitatore") \
+            .eq("sito_id", sito_id_int).gte("data", novanta_giorni_fa).execute()
+        storico = storico_resp.data
+
+        oggi = datetime.now().strftime("%Y-%m-%d")
+        fine = (datetime.now() + timedelta(days=giorni)).strftime("%Y-%m-%d")
+        prev_resp = supabase.table("previsioni_affluenza").select("*").eq("sito_id", sito_id_int) \
+            .gte("data_previsione", oggi).lte("data_previsione", fine).order("data_previsione").execute()
+        previsioni_aff = prev_resp.data
+
+        if not previsioni_aff:
+            return {"errore": "Nessuna previsione di affluenza disponibile per questo sito"}
+
+        risultati = []
+        for p in previsioni_aff:
+            data_str = p["data_previsione"]
+            visitatori_previsti = p["affluenza_stimata"]
+            giorno_settimana = pd.to_datetime(data_str).weekday()
+
+            composizione = calcola_composizione_giorno(storico, giorno_settimana)
+
+            ricavo_biglietti = 0
+            ricavo_commerciale = 0
+            dettaglio_profili = []
+
+            for comp in composizione:
+                n_persone_profilo = visitatori_previsti * comp["quota"]
+                chiave = (comp["fascia"], comp["provenienza_macro"], comp["tipo_visitatore"])
+                coeff = coefficienti.get(chiave, 1.0)
+
+                prezzo_medio = tariffe["prezzo_biglietto"] * (1 - tariffe["percentuale_ridotti"]/100) + tariffe["prezzo_ridotto"] * (tariffe["percentuale_ridotti"]/100)
+                bookshop_base = (tariffe["percentuale_bookshop"]/100) * tariffe["spesa_media_bookshop"]
+                ristorazione_base = (tariffe["percentuale_ristorazione"]/100) * tariffe["spesa_media_ristorazione"]
+
+                ricavo_biglietti += n_persone_profilo * prezzo_medio
+                ricavo_commerciale += n_persone_profilo * (bookshop_base + ristorazione_base) * coeff
+
+                dettaglio_profili.append({
+                    "profilo": f"{comp['fascia']} · {comp['provenienza_macro']} · {comp['tipo_visitatore']}",
+                    "quota_pct": round(comp["quota"] * 100, 1),
+                    "coefficiente": coeff
+                })
+
+            margine_netto = ricavo_biglietti + ricavo_commerciale
+            dettaglio_profili.sort(key=lambda x: x["quota_pct"], reverse=True)
+            composizione_dominante = dettaglio_profili[0]["profilo"] if dettaglio_profili else "N/D"
+
+            risultati.append({
+                "data": data_str,
+                "visitatori_previsti": round(visitatori_previsti, 1),
+                "ricavo_biglietti": round(ricavo_biglietti, 2),
+                "ricavo_commerciale": round(ricavo_commerciale, 2),
+                "margine_netto": round(margine_netto, 2),
+                "composizione_dominante": composizione_dominante,
+                "top_profili": dettaglio_profili[:3]
+            })
+
+            supabase.table("previsioni_economiche").upsert({
+                "sito_id": sito_id_int,
+                "data": data_str,
+                "visitatori_previsti": round(visitatori_previsti, 1),
+                "ricavo_biglietti": round(ricavo_biglietti, 2),
+                "ricavo_commerciale": round(ricavo_commerciale, 2),
+                "margine_netto": round(margine_netto, 2),
+                "composizione_dominante": composizione_dominante,
+            }, on_conflict="sito_id,data").execute()
+
+        return {"sito_id": sito_id_int, "nome_sito": tariffe["nome_sito"], "previsioni": risultati}
+
+    except Exception as e:
+        print(f"Errore previsioni economiche sito {sito_id}: {e}")
+        return {"errore": str(e)}
+
         # ---- GENERAZIONE RELAZIONE ----
 @app.post("/genera-relazione")
 async def genera_relazione(payload: dict):
