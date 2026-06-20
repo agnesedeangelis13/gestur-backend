@@ -580,9 +580,12 @@ def calcola_clv_clusters(sito_id_int, giorni_storico=90):
 
         margine_medio_giornaliero = ricavo_storico / giorni_periodo if giorni_periodo > 0 else 0
         if costo_fisso > 0 and margine_medio_giornaliero > 0:
-            giorni_breakeven = round((costo_fisso / 7) / margine_medio_giornaliero, 1)
+            giorni_breakeven_raw = (costo_fisso / 7) / margine_medio_giornaliero
+            giorni_breakeven = round(giorni_breakeven_raw, 1)
+            breakeven_oltre_anno = giorni_breakeven_raw > 365
         else:
             giorni_breakeven = None
+            breakeven_oltre_anno = False
 
         risultati.append({
             "provenienza": provenienza,
@@ -591,7 +594,8 @@ def calcola_clv_clusters(sito_id_int, giorni_storico=90):
             "n_presenze_storiche": round(d["n_presenze"], 1),
             "ricavo_storico": round(ricavo_storico, 2),
             "clv": round(clv, 2),
-            "giorni_breakeven_cluster": giorni_breakeven
+            "giorni_breakeven_cluster": giorni_breakeven if not breakeven_oltre_anno else None,
+            "breakeven_oltre_anno": breakeven_oltre_anno
         })
 
     return {"cluster": risultati, "nome_sito": tariffe["nome_sito"]}, None
@@ -640,15 +644,17 @@ def budget_promozione(sito_id: str):
                 "pct_budget_allocato": c["pct_budget_allocato"],
                 "giorni_breakeven_cluster": c["giorni_breakeven_cluster"],
                 "velocita_relativa": c["velocita_relativa"],
+                "breakeven_oltre_anno": c.get("breakeven_oltre_anno", False),
                 "generata_il": datetime.now().isoformat()
             }, on_conflict="sito_id,provenienza,fascia,tipo_visitatore").execute()
 
         cluster_top = cluster_list[0]
-        velocita_txt = (
-            f"con una velocità di pareggio {cluster_top['velocita_relativa']}x rispetto alla media"
-            if cluster_top.get("velocita_relativa") and cluster_top["velocita_relativa"] > 1
-            else "con un ritmo di break-even nella norma"
-        )
+        if cluster_top.get("breakeven_oltre_anno"):
+            velocita_txt = "pur con un orizzonte di pareggio autonomo superiore all'anno se isolato dagli altri segmenti"
+        elif cluster_top.get("velocita_relativa") and cluster_top["velocita_relativa"] > 1:
+            velocita_txt = f"con una velocità di pareggio {cluster_top['velocita_relativa']}x rispetto alla media"
+        else:
+            velocita_txt = "con un ritmo di break-even nella norma"
         verdetto = (
             f"Il cluster \"{cluster_top['tipo_visitatore']} provenienti da {cluster_top['provenienza']}\" "
             f"di fascia {cluster_top['fascia']} anni si è confermato il segmento più rilevante per l'economia locale, "
