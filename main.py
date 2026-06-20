@@ -260,6 +260,11 @@ def mappa_provenienza_macro(provenienza):
         return "Europa"
     return "Resto del mondo"
 
+def normalizza_fascia(fascia):
+    if not fascia:
+        return fascia
+    return fascia.strip().replace("\u2013", "-").replace("\u2014", "-")
+
 def calcola_composizione_giorno(dati_storici, giorno_settimana):
     righe_giorno = [r for r in dati_storici if pd.to_datetime(r["data"]).weekday() == giorno_settimana]
     if not righe_giorno:
@@ -270,7 +275,7 @@ def calcola_composizione_giorno(dati_storici, giorno_settimana):
     totale_persone = 0
     for r in righe_giorno:
         fasce = (r.get("fasce") or "").split(", ")
-        fasce = [f for f in fasce if f]
+        fasce = [normalizza_fascia(f) for f in fasce if f]
         if not fasce:
             continue
         n_persone = r.get("gruppo", 0) or 0
@@ -547,7 +552,7 @@ def calcola_clv_clusters(sito_id_int, giorni_storico=90):
 
     for r in storico:
         fasce = (r.get("fasce") or "").split(", ")
-        fasce = [f for f in fasce if f]
+        fasce = [normalizza_fascia(f) for f in fasce if f]
         if not fasce:
             continue
         n_persone = r.get("gruppo", 0) or 0
