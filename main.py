@@ -263,6 +263,8 @@ def mappa_provenienza_macro(provenienza):
 def calcola_composizione_giorno(dati_storici, giorno_settimana):
     righe_giorno = [r for r in dati_storici if pd.to_datetime(r["data"]).weekday() == giorno_settimana]
     if not righe_giorno:
+        righe_giorno = dati_storici  # fallback: usa tutto lo storico se manca quel giorno specifico
+    if not righe_giorno:
         return []
     composizione = {}
     totale_persone = 0
