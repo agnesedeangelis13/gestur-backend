@@ -515,6 +515,160 @@ def break_even(sito_id: str):
         print(f"Errore break-even sito {sito_id}: {e}")
         return {"errore": str(e)}
 
+        # ---- MATRICE DI ALLOCAZIONE BUDGET DI PROMOZIONE ----
+COSTO_MARGINALE_PCT = 0.15  # quota stimata di costi variabili sul ricavo per visitatore
+
+def calcola_clv_clusters(sito_id_int, giorni_storico=90):
+    tariffe_resp = supabase.table("siti_culturali").select(
+        "nome_sito, costo_fisso_settimanale, prezzo_biglietto, prezzo_ridotto, percentuale_ridotti, "
+        "percentuale_bookshop, spesa_media_bookshop, "
+        "percentuale_ristorazione, spesa_media_ristorazione"
+    ).eq("id", sito_id_int).single().execute()
+    tariffe = tariffe_resp.data
+    if not tariffe:
+        return None, "Sito non trovato"
+
+    coeff_resp = supabase.table("coefficienti_spesa").select("*").eq("sito_id", sito_id_int).execute()
+    coefficienti = {(c["fascia"], c["provenienza_macro"], c["tipo_visitatore"]): c["coefficiente"] for c in coeff_resp.data}
+
+    data_inizio = (datetime.now() - timedelta(days=giorni_storico)).strftime("%Y-%m-%d")
+    storico_resp = supabase.table("presenza").select("data, gruppo, fasce, provenienza, tipo_visitatore") \
+        .eq("sito_id", sito_id_int).gte("data", data_inizio).execute()
+    storico = storico_resp.data
+
+    if not storico:
+        return None, "Nessun dato storico disponibile per questo sito"
+
+    prezzo_medio = tariffe["prezzo_biglietto"] * (1 - tariffe["percentuale_ridotti"]/100) + tariffe["prezzo_ridotto"] * (tariffe["percentuale_ridotti"]/100)
+    bookshop_base = (tariffe["percentuale_bookshop"]/100) * tariffe["spesa_media_bookshop"]
+    ristorazione_base = (tariffe["percentuale_ristorazione"]/100) * tariffe["spesa_media_ristorazione"]
+
+    cluster_dati = {}  # chiave: (provenienza, fascia, tipo_visitatore)
+
+    for r in storico:
+        fasce = (r.get("fasce") or "").split(", ")
+        fasce = [f for f in fasce if f]
+        if not fasce:
+            continue
+        n_persone = r.get("gruppo", 0) or 0
+        tipo = r.get("tipo_visitatore") or "gruppo"
+        provenienza = r.get("provenienza") or "N/D"
+        prov_macro = mappa_provenienza_macro(provenienza)
+        per_fascia = n_persone / len(fasce)
+
+        for f in fasce:
+            chiave = (provenienza, f, tipo)
+            coeff = coefficienti.get((f, prov_macro, tipo), 1.0)
+
+            ricavo_biglietti = per_fascia * prezzo_medio
+            ricavo_commerciale = per_fascia * (bookshop_base + ristorazione_base) * coeff
+            ricavo_cluster = ricavo_biglietti + ricavo_commerciale
+
+            if chiave not in cluster_dati:
+                cluster_dati[chiave] = {"n_presenze": 0, "ricavo_storico": 0}
+            cluster_dati[chiave]["n_presenze"] += per_fascia
+            cluster_dati[chiave]["ricavo_storico"] += ricavo_cluster
+
+    costo_fisso = tariffe.get("costo_fisso_settimanale") or 0
+    giorni_periodo = giorni_storico
+
+    risultati = []
+    for (provenienza, fascia, tipo), d in cluster_dati.items():
+        ricavo_storico = d["ricavo_storico"]
+        costi_marginali = ricavo_storico * COSTO_MARGINALE_PCT
+        clv = ricavo_storico - costi_marginali
+
+        margine_medio_giornaliero = ricavo_storico / giorni_periodo if giorni_periodo > 0 else 0
+        if costo_fisso > 0 and margine_medio_giornaliero > 0:
+            giorni_breakeven = round((costo_fisso / 7) / margine_medio_giornaliero, 1)
+        else:
+            giorni_breakeven = None
+
+        risultati.append({
+            "provenienza": provenienza,
+            "fascia": fascia,
+            "tipo_visitatore": tipo,
+            "n_presenze_storiche": round(d["n_presenze"], 1),
+            "ricavo_storico": round(ricavo_storico, 2),
+            "clv": round(clv, 2),
+            "giorni_breakeven_cluster": giorni_breakeven
+        })
+
+    return {"cluster": risultati, "nome_sito": tariffe["nome_sito"]}, None
+
+
+@app.get("/budget-promozione/{sito_id}")
+def budget_promozione(sito_id: str):
+    try:
+        sito_id_int = int(sito_id)
+
+        risultato, errore = calcola_clv_clusters(sito_id_int)
+        if errore:
+            return {"errore": errore}
+
+        cluster_list = risultato["cluster"]
+        nome_sito = risultato["nome_sito"]
+
+        if not cluster_list:
+            return {"errore": "Nessun cluster con dati sufficienti per questo sito"}
+
+        clv_totale = sum(c["clv"] for c in cluster_list)
+        if clv_totale <= 0:
+            return {"errore": "CLV complessivo non positivo: dati insufficienti o costi superiori ai ricavi storici"}
+
+        giorni_validi = [c["giorni_breakeven_cluster"] for c in cluster_list if c["giorni_breakeven_cluster"] is not None]
+        media_giorni_breakeven = sum(giorni_validi) / len(giorni_validi) if giorni_validi else None
+
+        for c in cluster_list:
+            c["pct_budget_allocato"] = round((c["clv"] / clv_totale) * 100, 1) if c["clv"] > 0 else 0.0
+            if c["giorni_breakeven_cluster"] is not None and media_giorni_breakeven and media_giorni_breakeven > 0:
+                c["velocita_relativa"] = round(media_giorni_breakeven / c["giorni_breakeven_cluster"], 2) if c["giorni_breakeven_cluster"] > 0 else None
+            else:
+                c["velocita_relativa"] = None
+
+        cluster_list.sort(key=lambda x: x["clv"], reverse=True)
+
+        for c in cluster_list:
+            supabase.table("previsioni_budget_promozione").upsert({
+                "sito_id": sito_id_int,
+                "provenienza": c["provenienza"],
+                "fascia": c["fascia"],
+                "tipo_visitatore": c["tipo_visitatore"],
+                "n_presenze_storiche": c["n_presenze_storiche"],
+                "ricavo_storico": c["ricavo_storico"],
+                "clv": c["clv"],
+                "pct_budget_allocato": c["pct_budget_allocato"],
+                "giorni_breakeven_cluster": c["giorni_breakeven_cluster"],
+                "velocita_relativa": c["velocita_relativa"],
+                "generata_il": datetime.now().isoformat()
+            }, on_conflict="sito_id,provenienza,fascia,tipo_visitatore").execute()
+
+        cluster_top = cluster_list[0]
+        velocita_txt = (
+            f"con una velocità di pareggio {cluster_top['velocita_relativa']}x rispetto alla media"
+            if cluster_top.get("velocita_relativa") and cluster_top["velocita_relativa"] > 1
+            else "con un ritmo di break-even nella norma"
+        )
+        verdetto = (
+            f"Il cluster \"{cluster_top['tipo_visitatore']} provenienti da {cluster_top['provenienza']}\" "
+            f"di fascia {cluster_top['fascia']} anni si è confermato il segmento più rilevante per l'economia locale, "
+            f"{velocita_txt}. Il consiglio di gestione suggerisce di allocare il "
+            f"{cluster_top['pct_budget_allocato']}% del budget di promozione su questo target "
+            f"per massimizzare il ritorno economico delle casse comunali."
+        )
+
+        return {
+            "sito_id": sito_id_int,
+            "nome_sito": nome_sito,
+            "cluster_top": cluster_top,
+            "verdetto": verdetto,
+            "matrice": cluster_list
+        }
+
+    except Exception as e:
+        print(f"Errore budget promozione sito {sito_id}: {e}")
+        return {"errore": str(e)}
+
         # ---- GENERAZIONE RELAZIONE ----
 @app.post("/genera-relazione")
 async def genera_relazione(payload: dict):
