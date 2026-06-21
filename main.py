@@ -132,7 +132,7 @@ async def aggiorna_tutte():
                         "data_previsione": p["data"],
                         "affluenza_stimata": p["presenze_previste"],
                         "generata_il": datetime.now().isoformat()
-                    }).execute()
+                    }, on_conflict="sito_id,data_previsione").execute()
 
                 utenti = supabase.table("utenti").select("email, ruolo") \
                     .in_("ruolo", ["admin", "comune"]).execute()
