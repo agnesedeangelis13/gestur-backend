@@ -702,6 +702,48 @@ def salva_snapshot_clv_mensile_tutti(anno: int = None, mese: int = None):
         return {"errore": str(e)}
 
 
+def calcola_preavviso_marketing(sito_id_int):
+    oggi = datetime.now()
+    mese_prossimo = oggi.month + 1 if oggi.month < 12 else 1
+    anno_riferimento = oggi.year - 1 if oggi.month < 12 else oggi.year - 1
+    # Se il mese prossimo cade nell'anno successivo (es. oggi dicembre, prossimo mese gennaio),
+    # l'anno di riferimento dello scorso ciclo resta comunque "un anno fa rispetto a oggi".
+
+    snapshot_resp = supabase.table("storico_clv_mensile").select("*") \
+        .eq("sito_id", sito_id_int).eq("anno", anno_riferimento).eq("mese", mese_prossimo) \
+        .order("clv", desc=True).execute()
+    snapshot = snapshot_resp.data
+
+    if not snapshot:
+        return None
+
+    cluster_top_anno_scorso = snapshot[0]
+
+    nomi_mesi = ["", "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+                 "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"]
+    nome_mese_prossimo = nomi_mesi[mese_prossimo]
+
+    messaggio = (
+        f"Avviso anticipato: lo scorso anno, a {nome_mese_prossimo}, il cluster \"{cluster_top_anno_scorso['tipo_visitatore']} "
+        f"provenienti da {cluster_top_anno_scorso['provenienza']}\" di fascia {cluster_top_anno_scorso['fascia']} anni "
+        f"è stato il segmento con il valore più alto. Se il pattern si confermasse, anticipare la campagna di promozione "
+        f"su questo target nelle prossime settimane potrebbe massimizzare l'affluenza prevista. "
+        f"Questo è un confronto storico, non una previsione garantita: il turismo è un fenomeno variabile."
+    )
+
+    return {
+        "mese_riferimento": nome_mese_prossimo,
+        "anno_riferimento": anno_riferimento,
+        "cluster_atteso": {
+            "provenienza": cluster_top_anno_scorso["provenienza"],
+            "fascia": cluster_top_anno_scorso["fascia"],
+            "tipo_visitatore": cluster_top_anno_scorso["tipo_visitatore"],
+            "clv_anno_scorso": cluster_top_anno_scorso["clv"]
+        },
+        "messaggio": messaggio
+    }
+
+
 @app.get("/budget-promozione/{sito_id}")
 def budget_promozione(sito_id: str):
     try:
@@ -761,15 +803,20 @@ def budget_promozione(sito_id: str):
             f"di fascia {cluster_top['fascia']} anni si è confermato il segmento più rilevante per l'economia locale, "
             f"{velocita_txt}. Il consiglio di gestione suggerisce di allocare il "
             f"{cluster_top['pct_budget_allocato']}% del budget di promozione su questo target "
-            f"per massimizzare il ritorno economico delle casse comunali."
+            f"per massimizzare il ritorno economico delle casse comunali. "
+            f"Questa analisi si basa sui dati storici degli ultimi 90 giorni: è una lettura di ciò che ha "
+            f"funzionato finora, non una previsione garantita per il futuro."
         )
+
+        preavviso_marketing = calcola_preavviso_marketing(sito_id_int)
 
         return {
             "sito_id": sito_id_int,
             "nome_sito": nome_sito,
             "cluster_top": cluster_top,
             "verdetto": verdetto,
-            "matrice": cluster_list
+            "matrice": cluster_list,
+            "preavviso_marketing": preavviso_marketing
         }
 
     except Exception as e:
