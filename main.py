@@ -624,7 +624,7 @@ def calcola_range_mese(anno, mese):
     return data_inizio, data_fine
 
 
-@app.post("/snapshot-clv-mensile/{sito_id}")
+@app.get("/snapshot-clv-mensile/{sito_id}")
 def salva_snapshot_clv_mensile(sito_id: str, anno: int = None, mese: int = None):
     try:
         sito_id_int = int(sito_id)
