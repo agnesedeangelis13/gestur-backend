@@ -523,7 +523,7 @@ def break_even(sito_id: str):
         # ---- MATRICE DI ALLOCAZIONE BUDGET DI PROMOZIONE ----
 COSTO_MARGINALE_PCT = 0.15  # quota stimata di costi variabili sul ricavo per visitatore
 
-def calcola_clv_clusters(sito_id_int, giorni_storico=90):
+def calcola_clv_clusters(sito_id_int, giorni_storico=90, data_inizio=None, data_fine=None):
     tariffe_resp = supabase.table("siti_culturali").select(
         "nome_sito, costo_fisso_settimanale, prezzo_biglietto, prezzo_ridotto, percentuale_ridotti, "
         "percentuale_bookshop, spesa_media_bookshop, "
@@ -536,13 +536,18 @@ def calcola_clv_clusters(sito_id_int, giorni_storico=90):
     coeff_resp = supabase.table("coefficienti_spesa").select("*").eq("sito_id", sito_id_int).execute()
     coefficienti = {(c["fascia"], c["provenienza_macro"], c["tipo_visitatore"]): c["coefficiente"] for c in coeff_resp.data}
 
-    data_inizio = (datetime.now() - timedelta(days=giorni_storico)).strftime("%Y-%m-%d")
-    storico_resp = supabase.table("presenza").select("data, gruppo, fasce, provenienza, tipo_visitatore") \
-        .eq("sito_id", sito_id_int).gte("data", data_inizio).execute()
+    if data_inizio is None:
+        data_inizio = (datetime.now() - timedelta(days=giorni_storico)).strftime("%Y-%m-%d")
+
+    query = supabase.table("presenza").select("data, gruppo, fasce, provenienza, tipo_visitatore") \
+        .eq("sito_id", sito_id_int).gte("data", data_inizio)
+    if data_fine:
+        query = query.lte("data", data_fine)
+    storico_resp = query.execute()
     storico = storico_resp.data
 
     if not storico:
-        return None, "Nessun dato storico disponibile per questo sito"
+        return None, "Nessun dato storico disponibile per questo sito nel periodo richiesto"
 
     prezzo_medio = tariffe["prezzo_biglietto"] * (1 - tariffe["percentuale_ridotti"]/100) + tariffe["prezzo_ridotto"] * (tariffe["percentuale_ridotti"]/100)
     bookshop_base = (tariffe["percentuale_bookshop"]/100) * tariffe["spesa_media_bookshop"]
@@ -575,7 +580,10 @@ def calcola_clv_clusters(sito_id_int, giorni_storico=90):
             cluster_dati[chiave]["ricavo_storico"] += ricavo_cluster
 
     costo_fisso = tariffe.get("costo_fisso_settimanale") or 0
-    giorni_periodo = giorni_storico
+    if data_fine:
+        giorni_periodo = (datetime.strptime(data_fine, "%Y-%m-%d") - datetime.strptime(data_inizio, "%Y-%m-%d")).days + 1
+    else:
+        giorni_periodo = giorni_storico
 
     risultati = []
     for (provenienza, fascia, tipo), d in cluster_dati.items():
@@ -604,6 +612,61 @@ def calcola_clv_clusters(sito_id_int, giorni_storico=90):
         })
 
     return {"cluster": risultati, "nome_sito": tariffe["nome_sito"]}, None
+
+
+def calcola_range_mese(anno, mese):
+    data_inizio = f"{anno}-{mese:02d}-01"
+    if mese == 12:
+        ultimo_giorno = datetime(anno + 1, 1, 1) - timedelta(days=1)
+    else:
+        ultimo_giorno = datetime(anno, mese + 1, 1) - timedelta(days=1)
+    data_fine = ultimo_giorno.strftime("%Y-%m-%d")
+    return data_inizio, data_fine
+
+
+@app.post("/snapshot-clv-mensile/{sito_id}")
+def salva_snapshot_clv_mensile(sito_id: str, anno: int = None, mese: int = None):
+    try:
+        sito_id_int = int(sito_id)
+        oggi = datetime.now()
+        anno_target = anno or oggi.year
+        mese_target = mese or oggi.month
+
+        data_inizio, data_fine = calcola_range_mese(anno_target, mese_target)
+
+        risultato, errore = calcola_clv_clusters(sito_id_int, data_inizio=data_inizio, data_fine=data_fine)
+        if errore:
+            return {"errore": errore, "anno": anno_target, "mese": mese_target}
+
+        cluster_list = risultato["cluster"]
+        if not cluster_list:
+            return {"errore": "Nessun cluster con dati per questo mese", "anno": anno_target, "mese": mese_target}
+
+        salvati = 0
+        for c in cluster_list:
+            supabase.table("storico_clv_mensile").upsert({
+                "sito_id": sito_id_int,
+                "anno": anno_target,
+                "mese": mese_target,
+                "provenienza": c["provenienza"],
+                "fascia": c["fascia"],
+                "tipo_visitatore": c["tipo_visitatore"],
+                "n_presenze": c["n_presenze_storiche"],
+                "clv": c["clv"],
+                "generato_il": datetime.now().isoformat()
+            }, on_conflict="sito_id,anno,mese,provenienza,fascia,tipo_visitatore").execute()
+            salvati += 1
+
+        return {
+            "sito_id": sito_id_int,
+            "anno": anno_target,
+            "mese": mese_target,
+            "cluster_salvati": salvati
+        }
+
+    except Exception as e:
+        print(f"Errore snapshot CLV mensile sito {sito_id}: {e}")
+        return {"errore": str(e)}
 
 
 @app.get("/budget-promozione/{sito_id}")
