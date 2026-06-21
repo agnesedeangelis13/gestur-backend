@@ -823,6 +823,173 @@ def budget_promozione(sito_id: str):
         print(f"Errore budget promozione sito {sito_id}: {e}")
         return {"errore": str(e)}
 
+        # ---- WELCOME DESK COST OPTIMIZER ----
+def calcola_composizione_settimana(storico, date_settimana):
+    """Aggrega la composizione per cluster su un insieme di giorni futuri, usando il pattern
+    storico del relativo giorno della settimana (stesso meccanismo di calcola_composizione_giorno)."""
+    composizione_per_giorno = []
+    for d in date_settimana:
+        giorno_settimana = pd.to_datetime(d).weekday()
+        composizione_per_giorno.append(calcola_composizione_giorno(storico, giorno_settimana))
+    return composizione_per_giorno
+
+
+@app.get("/welcome-desk-planner/{sito_id}")
+def welcome_desk_planner(sito_id: str):
+    try:
+        sito_id_int = int(sito_id)
+
+        sito_resp = supabase.table("siti_culturali").select(
+            "nome_sito, costo_stampa_materiale_settimanale, costo_assistenza_digitale_settimanale"
+        ).eq("id", sito_id_int).single().execute()
+        sito = sito_resp.data
+        if not sito:
+            return {"errore": "Sito non trovato"}
+
+        coeff_canale_resp = supabase.table("coefficienti_canale").select("*").eq("sito_id", sito_id_int).execute()
+        coeff_canale = {
+            (c["fascia"], c["provenienza_macro"], c["tipo_visitatore"]): c["pct_preferenza_cartaceo"]
+            for c in coeff_canale_resp.data
+        }
+        if not coeff_canale:
+            return {"errore": "Nessun coefficiente di canale configurato per questo sito"}
+
+        novanta_giorni_fa = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        storico_resp = supabase.table("presenza").select("data, gruppo, fasce, provenienza, tipo_visitatore") \
+            .eq("sito_id", sito_id_int).gte("data", novanta_giorni_fa).execute()
+        storico = storico_resp.data
+        if not storico:
+            return {"errore": "Nessun dato storico disponibile per questo sito"}
+
+        oggi = datetime.now()
+        fine = oggi + timedelta(days=7)
+        prev_resp = supabase.table("previsioni_affluenza").select("*").eq("sito_id", sito_id_int) \
+            .gte("data_previsione", oggi.strftime("%Y-%m-%d")).lte("data_previsione", fine.strftime("%Y-%m-%d")) \
+            .order("data_previsione").execute()
+        previsioni_aff = prev_resp.data
+        if not previsioni_aff:
+            return {"errore": "Nessuna previsione di affluenza disponibile per questo sito"}
+
+        nomi_giorni = ["Lunedì", "Martedì", "Mercoledì", "Giovedì", "Venerdì", "Sabato", "Domenica"]
+        dettaglio_giorni = []
+        somma_pct_cartaceo_pesata = 0
+        somma_visitatori = 0
+
+        for p in previsioni_aff:
+            data_str = p["data_previsione"]
+            visitatori_previsti = p["affluenza_stimata"]
+            giorno_settimana = pd.to_datetime(data_str).weekday()
+
+            composizione = calcola_composizione_giorno(storico, giorno_settimana)
+
+            pct_cartaceo_giorno = 0
+            for comp in composizione:
+                chiave = (comp["fascia"], comp["provenienza_macro"], comp["tipo_visitatore"])
+                pref_cartaceo = coeff_canale.get(chiave, 50)  # default neutro se cluster non configurato
+                pct_cartaceo_giorno += comp["quota"] * pref_cartaceo
+
+            composizione_ordinata = sorted(composizione, key=lambda x: x["quota"], reverse=True)
+            cluster_dominante_giorno = composizione_ordinata[0] if composizione_ordinata else None
+
+            dettaglio_giorni.append({
+                "data": data_str,
+                "nome_giorno": nomi_giorni[giorno_settimana],
+                "visitatori_previsti": round(visitatori_previsti, 1),
+                "pct_preferenza_cartaceo": round(pct_cartaceo_giorno, 1),
+                "pct_preferenza_digitale": round(100 - pct_cartaceo_giorno, 1),
+                "cluster_dominante": (
+                    f"{cluster_dominante_giorno['fascia']} · {cluster_dominante_giorno['provenienza_macro']} · {cluster_dominante_giorno['tipo_visitatore']}"
+                    if cluster_dominante_giorno else "N/D"
+                ),
+                "e_weekend": giorno_settimana >= 5
+            })
+
+            somma_pct_cartaceo_pesata += pct_cartaceo_giorno * visitatori_previsti
+            somma_visitatori += visitatori_previsti
+
+        pct_cartaceo_settimana = round(somma_pct_cartaceo_pesata / somma_visitatori, 1) if somma_visitatori > 0 else 50
+        pct_digitale_settimana = round(100 - pct_cartaceo_settimana, 1)
+
+        costo_stampa = sito.get("costo_stampa_materiale_settimanale")
+        costo_digitale = sito.get("costo_assistenza_digitale_settimanale")
+
+        risparmio_stimato = None
+        if costo_stampa is not None:
+            # Riduzione di stampa proporzionale alla quota digitale della settimana,
+            # rispetto a un'allocazione di base 50/50 presa come riferimento neutro.
+            riduzione_pct = max(0, pct_digitale_settimana - 50) / 50  # 0 se <=50% digitale, fino a 1 se 100% digitale
+            risparmio_stimato = round(costo_stampa * riduzione_pct, 2)
+
+        giorni_weekend = [g for g in dettaglio_giorni if g["e_weekend"]]
+        nota_weekend = None
+        if giorni_weekend:
+            media_cartaceo_weekend = sum(g["pct_preferenza_cartaceo"] for g in giorni_weekend) / len(giorni_weekend)
+            media_cartaceo_settimana_feriale = pct_cartaceo_settimana
+            if abs(media_cartaceo_weekend - media_cartaceo_settimana_feriale) > 15:
+                if media_cartaceo_weekend > media_cartaceo_settimana_feriale:
+                    nota_weekend = (
+                        f"Il weekend si distingue dal resto della settimana con una preferenza più marcata "
+                        f"per il materiale cartaceo ({round(media_cartaceo_weekend, 1)}%): si consiglia di "
+                        f"rifornire i desk di mappe fisiche prima del weekend."
+                    )
+                else:
+                    nota_weekend = (
+                        f"Il weekend si distingue dal resto della settimana con una preferenza più marcata "
+                        f"per l'assistenza digitale ({round(100 - media_cartaceo_weekend, 1)}% digitale): "
+                        f"si consiglia di concentrare il personale sull'assistenza rapida via QR/app."
+                    )
+
+        if pct_digitale_settimana >= 65:
+            indicazione = (
+                f"la settimana sarà dominata da un pubblico a forte preferenza digitale "
+                f"({pct_digitale_settimana}%). Il consiglio di gestione è ridurre la stampa di materiale "
+                f"cartaceo e deviare il budget sull'assistenza digitale rapida (QR code, app, postazioni self-service)."
+            )
+        elif pct_cartaceo_settimana >= 65:
+            indicazione = (
+                f"la settimana sarà dominata da un pubblico a forte preferenza cartacea "
+                f"({pct_cartaceo_settimana}%). Il consiglio di gestione è rifornire adeguatamente i desk "
+                f"di mappe e materiale informativo fisico, e mantenere personale dedicato all'assistenza diretta."
+            )
+        else:
+            indicazione = (
+                f"la settimana presenta una composizione mista tra preferenza cartacea ({pct_cartaceo_settimana}%) "
+                f"e digitale ({pct_digitale_settimana}%). Il consiglio di gestione è mantenere un'allocazione "
+                f"bilanciata delle risorse tra i due canali."
+            )
+
+        verdetto = f"In base alla composizione prevista dei visitatori, {indicazione}"
+        if risparmio_stimato is not None and risparmio_stimato > 0:
+            verdetto += f" Risparmio stimato sulla stampa rispetto a un'allocazione standard: €{risparmio_stimato:,.0f}.".replace(",", ".")
+        if nota_weekend:
+            verdetto += f" {nota_weekend}"
+        verdetto += (
+            " Questa analisi si basa su pattern storici e previsioni di affluenza: è un supporto decisionale, "
+            "non una previsione garantita."
+        )
+
+        avviso_costi = None
+        if costo_stampa is None or costo_digitale is None:
+            avviso_costi = (
+                "Per visualizzare il risparmio stimato in euro, imposta i costi settimanali di stampa "
+                "materiale e assistenza digitale nella configurazione del sito."
+            )
+
+        return {
+            "sito_id": sito_id_int,
+            "nome_sito": sito["nome_sito"],
+            "pct_preferenza_cartaceo_settimana": pct_cartaceo_settimana,
+            "pct_preferenza_digitale_settimana": pct_digitale_settimana,
+            "risparmio_stimato_euro": risparmio_stimato,
+            "avviso_costi": avviso_costi,
+            "verdetto": verdetto,
+            "dettaglio_giorni": dettaglio_giorni
+        }
+
+    except Exception as e:
+        print(f"Errore welcome desk planner sito {sito_id}: {e}")
+        return {"errore": str(e)}
+
         # ---- GENERAZIONE RELAZIONE ----
 @app.post("/genera-relazione")
 async def genera_relazione(payload: dict):
