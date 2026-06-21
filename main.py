@@ -624,6 +624,40 @@ def calcola_range_mese(anno, mese):
     return data_inizio, data_fine
 
 
+def esegui_snapshot_clv_mensile(sito_id_int, anno_target, mese_target):
+    data_inizio, data_fine = calcola_range_mese(anno_target, mese_target)
+
+    risultato, errore = calcola_clv_clusters(sito_id_int, data_inizio=data_inizio, data_fine=data_fine)
+    if errore:
+        return {"errore": errore, "anno": anno_target, "mese": mese_target}
+
+    cluster_list = risultato["cluster"]
+    if not cluster_list:
+        return {"errore": "Nessun cluster con dati per questo mese", "anno": anno_target, "mese": mese_target}
+
+    salvati = 0
+    for c in cluster_list:
+        supabase.table("storico_clv_mensile").upsert({
+            "sito_id": sito_id_int,
+            "anno": anno_target,
+            "mese": mese_target,
+            "provenienza": c["provenienza"],
+            "fascia": c["fascia"],
+            "tipo_visitatore": c["tipo_visitatore"],
+            "n_presenze": c["n_presenze_storiche"],
+            "clv": c["clv"],
+            "generato_il": datetime.now().isoformat()
+        }, on_conflict="sito_id,anno,mese,provenienza,fascia,tipo_visitatore").execute()
+        salvati += 1
+
+    return {
+        "sito_id": sito_id_int,
+        "anno": anno_target,
+        "mese": mese_target,
+        "cluster_salvati": salvati
+    }
+
+
 @app.get("/snapshot-clv-mensile/{sito_id}")
 def salva_snapshot_clv_mensile(sito_id: str, anno: int = None, mese: int = None):
     try:
@@ -632,40 +666,39 @@ def salva_snapshot_clv_mensile(sito_id: str, anno: int = None, mese: int = None)
         anno_target = anno or oggi.year
         mese_target = mese or oggi.month
 
-        data_inizio, data_fine = calcola_range_mese(anno_target, mese_target)
-
-        risultato, errore = calcola_clv_clusters(sito_id_int, data_inizio=data_inizio, data_fine=data_fine)
-        if errore:
-            return {"errore": errore, "anno": anno_target, "mese": mese_target}
-
-        cluster_list = risultato["cluster"]
-        if not cluster_list:
-            return {"errore": "Nessun cluster con dati per questo mese", "anno": anno_target, "mese": mese_target}
-
-        salvati = 0
-        for c in cluster_list:
-            supabase.table("storico_clv_mensile").upsert({
-                "sito_id": sito_id_int,
-                "anno": anno_target,
-                "mese": mese_target,
-                "provenienza": c["provenienza"],
-                "fascia": c["fascia"],
-                "tipo_visitatore": c["tipo_visitatore"],
-                "n_presenze": c["n_presenze_storiche"],
-                "clv": c["clv"],
-                "generato_il": datetime.now().isoformat()
-            }, on_conflict="sito_id,anno,mese,provenienza,fascia,tipo_visitatore").execute()
-            salvati += 1
-
-        return {
-            "sito_id": sito_id_int,
-            "anno": anno_target,
-            "mese": mese_target,
-            "cluster_salvati": salvati
-        }
+        return esegui_snapshot_clv_mensile(sito_id_int, anno_target, mese_target)
 
     except Exception as e:
         print(f"Errore snapshot CLV mensile sito {sito_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/snapshot-clv-mensile-tutti")
+def salva_snapshot_clv_mensile_tutti(anno: int = None, mese: int = None):
+    try:
+        oggi = datetime.now()
+        anno_target = anno or oggi.year
+        mese_target = mese or oggi.month
+
+        siti_resp = supabase.table("siti_culturali").select("id, nome_sito").execute()
+        siti = siti_resp.data or []
+
+        risultati = []
+        for sito in siti:
+            sito_id_int = sito["id"]
+            esito = esegui_snapshot_clv_mensile(sito_id_int, anno_target, mese_target)
+            esito["nome_sito"] = sito.get("nome_sito", f"Sito {sito_id_int}")
+            risultati.append(esito)
+
+        return {
+            "anno": anno_target,
+            "mese": mese_target,
+            "siti_processati": len(risultati),
+            "risultati": risultati
+        }
+
+    except Exception as e:
+        print(f"Errore snapshot CLV mensile tutti i siti: {e}")
         return {"errore": str(e)}
 
 
