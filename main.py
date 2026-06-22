@@ -990,6 +990,59 @@ def welcome_desk_planner(sito_id: str):
         print(f"Errore welcome desk planner sito {sito_id}: {e}")
         return {"errore": str(e)}
 
+        # ---- ANALISI SENTIMENT RICHIESTE PIT ----
+@app.get("/classifica-sentiment-pit/{richiesta_id}")
+async def classifica_sentiment_pit(richiesta_id: int):
+    import httpx
+    try:
+        riga_resp = supabase.table("richieste_pit").select("id, commento").eq("id", richiesta_id).single().execute()
+        riga = riga_resp.data
+        if not riga:
+            return {"errore": "Richiesta non trovata"}
+
+        commento = (riga.get("commento") or "").strip()
+        if not commento:
+            return {"id": richiesta_id, "sentiment": None, "nota": "Nessun commento da analizzare"}
+
+        prompt = f"""Classifica il tono del seguente commento, scritto da un operatore di un punto informativo turistico italiano, riguardo a una richiesta di un visitatore.
+
+Commento: "{commento}"
+
+Rispondi con UNA SOLA PAROLA tra queste tre, esattamente come scritta, senza punteggiatura né altro testo:
+positivo
+neutro
+negativo"""
+
+        ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": ANTHROPIC_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json"
+                },
+                json={
+                    "model": "claude-haiku-4-5-20251001",
+                    "max_tokens": 10,
+                    "messages": [{"role": "user", "content": prompt}]
+                },
+                timeout=30
+            )
+            risultato = resp.json()
+            testo = risultato["content"][0]["text"].strip().lower()
+
+        sentiment_valido = {"positivo", "neutro", "negativo"}
+        sentiment = testo if testo in sentiment_valido else "neutro"
+
+        supabase.table("richieste_pit").update({"sentiment": sentiment}).eq("id", richiesta_id).execute()
+
+        return {"id": richiesta_id, "sentiment": sentiment}
+
+    except Exception as e:
+        print(f"Errore classificazione sentiment richiesta {richiesta_id}: {e}")
+        return {"errore": str(e)}
+
         # ---- GENERAZIONE RELAZIONE ----
 @app.post("/genera-relazione")
 async def genera_relazione(payload: dict):
