@@ -1051,6 +1051,22 @@ async def genera_relazione(payload: dict):
         nome_sito = payload.get("nome_sito")
         mese = payload.get("mese")
         dati = payload.get("dati", {})
+        pit = payload.get("pit")
+
+        sezione_pit_dati = ""
+        sezione_pit_struttura = ""
+        if pit and pit.get("totaleRichieste", 0) > 0:
+            sezione_pit_dati = f"""
+
+Dati del Punto Informativo Turistico del comune di {pit.get('comune', 'N/D')} (servizio comunale, non specifico di questo sito):
+- Richieste totali gestite: {pit.get('totaleRichieste', 0)}
+- Tasso di soddisfazione: {pit.get('tassoSoddisfazione', 0)}%
+- Richieste parziali: {pit.get('parziali', 0)}
+- Richieste non soddisfatte: {pit.get('nonDisponibili', 0)}
+- Materiali più richiesti ma non disponibili: {pit.get('materialiMancanti', [])}
+- Sentiment dei commenti operatore (positivo/neutro/negativo): {pit.get('sentiment', {})}
+- Categorie più frequenti nei commenti negativi: {pit.get('categorieNegative', [])}"""
+            sezione_pit_struttura = "\n## PUNTO INFORMATIVO TURISTICO"
 
         prompt = f"""Sei un esperto di gestione dei beni culturali italiani. Genera una relazione mensile professionale e istituzionale per il sito "{nome_sito}" relativa al mese di {mese}.
 
@@ -1063,18 +1079,18 @@ Dati del mese:
 - Temperatura media: {dati.get('tempMedia', 'non disponibile')}°C
 - Top provenienza visitatori: {dati.get('topProv', [])}
 - Eventi del mese: {dati.get('eventi', [])}
-- Previsione visitatori prossimo mese: {dati.get('prevTotale', 0)}
+- Previsione visitatori prossimo mese: {dati.get('prevTotale', 0)}{sezione_pit_dati}
 
 Struttura la relazione con queste sezioni:
 ## SINTESI ESECUTIVA
 ## ANALISI AFFLUENZA
 ## ANALISI ECONOMICA
 ## PROFILO DEI VISITATORI
-## FATTORI CONTESTUALI
+## FATTORI CONTESTUALI{sezione_pit_struttura}
 ## PREVISIONI MESE SUCCESSIVO
 ## RACCOMANDAZIONI STRATEGICHE
 
-Scrivi in italiano formale e istituzionale. Sii specifico con i numeri. Lunghezza: circa 600-800 parole."""
+{"Nella sezione PUNTO INFORMATIVO TURISTICO, chiarisci che il servizio è gestito a livello comunale e non è specifico di questo singolo sito. " if sezione_pit_dati else ""}Scrivi in italiano formale e istituzionale. Sii specifico con i numeri. Lunghezza: circa 600-800 parole."""
 
         ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
         async with httpx.AsyncClient() as client:
