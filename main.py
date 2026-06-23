@@ -1068,6 +1068,10 @@ Dati del Punto Informativo Turistico del comune di {pit.get('comune', 'N/D')} (s
 - Categorie più frequenti nei commenti negativi: {pit.get('categorieNegative', [])}"""
             sezione_pit_struttura = "\n## PUNTO INFORMATIVO TURISTICO"
 
+        avviso_dati_zero = ""
+        if dati.get('totaleVisitatori', 0) == 0 and dati.get('totalePrec', 0) == 0:
+            avviso_dati_zero = "\n\nNOTA IMPORTANTE: i visitatori risultano a zero sia in questo mese che nel precedente. NON ipotizzare cause gestionali specifiche (manutenzione, restauro, chiusura, lavori) che non sono state fornite come dato. Indica invece, in modo neutro, che il valore zero può derivare da assenza di dati storici registrati nel sistema per questo periodo (es. sito di recente attivazione), oltre alla possibilità di una chiusura effettiva, senza affermare quale sia la causa reale."
+
         prompt = f"""Sei un esperto di gestione dei beni culturali italiani. Genera una relazione mensile professionale e istituzionale per il sito "{nome_sito}" relativa al mese di {mese}.
 
 Dati del mese:
@@ -1079,7 +1083,7 @@ Dati del mese:
 - Temperatura media: {dati.get('tempMedia', 'non disponibile')}°C
 - Top provenienza visitatori: {dati.get('topProv', [])}
 - Eventi del mese: {dati.get('eventi', [])}
-- Previsione visitatori prossimo mese: {dati.get('prevTotale', 0)}{sezione_pit_dati}
+- Previsione visitatori prossimo mese: {dati.get('prevTotale', 0)}{sezione_pit_dati}{avviso_dati_zero}
 
 Struttura la relazione con queste sezioni:
 ## SINTESI ESECUTIVA
