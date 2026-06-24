@@ -1065,7 +1065,8 @@ Dati del Punto Informativo Turistico del comune di {pit.get('comune', 'N/D')} (s
 - Richieste non soddisfatte: {pit.get('nonDisponibili', 0)}
 - Materiali più richiesti ma non disponibili: {pit.get('materialiMancanti', [])}
 - Sentiment dei commenti operatore (positivo/neutro/negativo): {pit.get('sentiment', {})}
-- Categorie più frequenti nei commenti negativi: {pit.get('categorieNegative', [])}"""
+- Categorie più frequenti nei commenti negativi: {pit.get('categorieNegative', [])}
+- Disservizi più frequenti segnalati dai visitatori (indipendentemente dal sentiment del commento): {pit.get('disserviziFrequenti', [])}"""
             sezione_pit_struttura = "\n## PUNTO INFORMATIVO TURISTICO"
 
         avviso_dati_zero = ""
@@ -1094,7 +1095,7 @@ Struttura la relazione con queste sezioni:
 ## PREVISIONI MESE SUCCESSIVO
 ## RACCOMANDAZIONI STRATEGICHE
 
-{"Nella sezione PUNTO INFORMATIVO TURISTICO, chiarisci che il servizio è gestito a livello comunale e non è specifico di questo singolo sito. " if sezione_pit_dati else ""}Scrivi in italiano formale e istituzionale. Sii specifico con i numeri. Lunghezza: circa 600-800 parole."""
+{"Nella sezione PUNTO INFORMATIVO TURISTICO, chiarisci che il servizio è gestito a livello comunale e non è specifico di questo singolo sito. Tieni distinte concettualmente le richieste di informazione (esito soddisfatta/parziale/non disponibile) dai disservizi segnalati (criticità operative come pulizia, manutenzione, codeore, ecc.): sono due categorie di dati diverse e non vanno confuse nel testo. " if sezione_pit_dati else ""}Scrivi in italiano formale e istituzionale. Sii specifico con i numeri. Lunghezza: circa 600-800 parole."""
 
         ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
         async with httpx.AsyncClient() as client:
