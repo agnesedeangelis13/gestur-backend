@@ -1120,3 +1120,63 @@ Struttura la relazione con queste sezioni:
     except Exception as e:
         print(f"Errore generazione relazione: {e}")
         return {"errore": str(e)}
+
+        # ---- APPROVAZIONE RICHIESTA EVENTO ----
+def calcola_impatto_da_saturazione(saturazione):
+    """Mappa il tasso di saturazione stimato della richiesta sulla scala basso/medio/alto
+    usata da eventi_locali per la variabile esogena del SARIMAX."""
+    if saturazione is None:
+        return "medio"
+    if saturazione < 50:
+        return "basso"
+    elif saturazione <= 85:
+        return "medio"
+    else:
+        return "alto"
+
+@app.put("/richieste-eventi/{richiesta_id}/approva")
+def approva_richiesta_evento(richiesta_id: int):
+    try:
+        richiesta_resp = supabase.table("richieste_eventi").select("*").eq("id", richiesta_id).single().execute()
+        richiesta = richiesta_resp.data
+        if not richiesta:
+            return {"errore": "Richiesta non trovata"}
+
+        # Evita di creare un evento duplicato se la richiesta è già stata approvata in precedenza:
+        # controlla se esiste già un evento in eventi_locali collegato a questa richiesta.
+        evento_esistente_resp = supabase.table("eventi_locali").select("*") \
+            .eq("richiesta_evento_id", richiesta_id).execute()
+        if evento_esistente_resp.data:
+            supabase.table("richieste_eventi").update({"stato_richiesta": "approvata"}).eq("id", richiesta_id).execute()
+            return {
+                "status": "già approvata",
+                "evento": evento_esistente_resp.data[0],
+                "nota": "Era già presente un evento collegato a questa richiesta: non ne è stato creato un secondo."
+            }
+
+        impatto_atteso = calcola_impatto_da_saturazione(richiesta.get("tasso_saturazione_stimato"))
+
+        nuovo_evento = {
+            "sito_id": richiesta["sito_id"],
+            "nome_evento": richiesta["nome_evento"],
+            "data_inizio": richiesta["data_inizio"],
+            "data_fine": richiesta["data_fine"],
+            "tipo_evento": richiesta["tipologia_evento"],
+            "impatto_atteso": impatto_atteso,
+            "note": f"Creato automaticamente da richiesta evento approvata (ID {richiesta_id}).",
+            "richiesta_evento_id": richiesta_id,
+        }
+
+        evento_creato = supabase.table("eventi_locali").insert(nuovo_evento).execute()
+
+        supabase.table("richieste_eventi").update({"stato_richiesta": "approvata"}).eq("id", richiesta_id).execute()
+
+        return {
+            "status": "approvata",
+            "evento": evento_creato.data[0] if evento_creato.data else None,
+            "impatto_atteso": impatto_atteso
+        }
+
+    except Exception as e:
+        print(f"Errore approvazione richiesta evento {richiesta_id}: {e}")
+        return {"errore": str(e)}
