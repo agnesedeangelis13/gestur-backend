@@ -1257,6 +1257,46 @@ def revenue_forecasting_eventi(comune_id: str, sito_id: int = None):
             })
         segmentazione.sort(key=lambda x: x["margine_totale"], reverse=True)
 
+        # Previsione per tipologia: basata solo su richieste confermate (approvata/completata),
+        # cioè eventi realmente accaduti, per dare una stima più solida di cosa aspettarsi
+        # da una nuova richiesta della stessa tipologia. L'affidabilità viene segnalata
+        # esplicitamente in base al numero di eventi disponibili, per onestà statistica:
+        # con pochi eventi la media è poco significativa e va presentata come tale.
+        previsioni_tipologia = {}
+        for r in confermate:
+            tip = r["tipologia_evento"]
+            if tip not in previsioni_tipologia:
+                previsioni_tipologia[tip] = {"dimensioni": [], "saturazioni": [], "margini": []}
+            if r.get("dimensione_attesa") is not None:
+                previsioni_tipologia[tip]["dimensioni"].append(r["dimensione_attesa"])
+            if r.get("tasso_saturazione_stimato") is not None:
+                previsioni_tipologia[tip]["saturazioni"].append(r["tasso_saturazione_stimato"])
+            previsioni_tipologia[tip]["margini"].append(margine_effettivo(r))
+
+        def media(lista):
+            return round(sum(lista) / len(lista), 1) if lista else None
+
+        def livello_affidabilita(n):
+            if n >= 5:
+                return "alta"
+            elif n >= 3:
+                return "media"
+            else:
+                return "bassa"
+
+        previsione_per_tipologia = []
+        for tip, dati in previsioni_tipologia.items():
+            n_eventi = len(dati["margini"])
+            previsione_per_tipologia.append({
+                "tipologia_evento": tip,
+                "n_eventi_storici": n_eventi,
+                "affidabilita": livello_affidabilita(n_eventi),
+                "dimensione_media_attesa": media(dati["dimensioni"]),
+                "saturazione_media_pct": media(dati["saturazioni"]),
+                "margine_medio": media(dati["margini"])
+            })
+        previsione_per_tipologia.sort(key=lambda x: x["n_eventi_storici"], reverse=True)
+
         return {
             "comune_id": comune_id,
             "sito_id": sito_id,
@@ -1270,7 +1310,8 @@ def revenue_forecasting_eventi(comune_id: str, sito_id: int = None):
             "valore_perso_rifiutate": valore_perso_rifiutate,
             "n_richieste_rifiutate": len(rifiutate),
             "segmentazione_per_tipologia": segmentazione,
-            "confronto_stima_reale": confronto_stima_reale
+            "confronto_stima_reale": confronto_stima_reale,
+            "previsione_per_tipologia": previsione_per_tipologia
         }
 
     except Exception as e:
