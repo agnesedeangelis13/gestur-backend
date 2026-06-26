@@ -1181,6 +1181,50 @@ def approva_richiesta_evento(richiesta_id: int):
         print(f"Errore approvazione richiesta evento {richiesta_id}: {e}")
         return {"errore": str(e)}
 
+def tenta_sarimax_su_serie(valori, passi_avanti=1):
+    """Tenta di addestrare un SARIMAX semplice (senza stagionalità, che richiederebbe troppi dati)
+    su una serie di valori ordinata temporalmente. Restituisce (previsione, usato_sarimax).
+    Se i punti sono troppo pochi per il modello o il fit fallisce numericamente, restituisce
+    (None, False) così il chiamante può ricadere sulla media storica senza fingere una previsione
+    che la matematica non può sostenere con questi dati.
+    """
+    # Minimo realistico per un SARIMAX (1,1,1) senza stagionalità: sotto 5 punti
+    # il modello non ha gradi di libertà sufficienti per stimare i suoi parametri.
+    if len(valori) < 5:
+        return None, False
+    try:
+        serie = pd.Series(valori)
+        modello = SARIMAX(serie, order=(1, 1, 1), enforce_stationarity=False, enforce_invertibility=False)
+        risultato = modello.fit(disp=False)
+        previsione = risultato.forecast(steps=passi_avanti)
+        valore_previsto = float(previsione.iloc[-1])
+        return max(0, round(valore_previsto, 1)), True
+    except Exception as e:
+        print(f"SARIMAX fallito su serie di {len(valori)} punti: {e}")
+        return None, False
+
+
+def conta_eventi_per_mese(date_lista):
+    """Aggrega una lista di date (stringhe YYYY-MM-DD) in conteggio eventi per mese,
+    riempiendo con zero i mesi senza eventi nel range osservato, per ottenere
+    una serie temporale regolare adatta a SARIMAX."""
+    if not date_lista:
+        return []
+    date_parsed = sorted(pd.to_datetime(date_lista))
+    primo_mese = date_parsed[0].to_period("M")
+    ultimo_mese = date_parsed[-1].to_period("M")
+    conteggio = {}
+    for d in date_parsed:
+        periodo = d.to_period("M")
+        conteggio[periodo] = conteggio.get(periodo, 0) + 1
+    mese_corrente = primo_mese
+    serie = []
+    while mese_corrente <= ultimo_mese:
+        serie.append(conteggio.get(mese_corrente, 0))
+        mese_corrente += 1
+    return serie
+
+
         # ---- REVENUE FORECASTING EVENTI ----
 @app.get("/revenue-forecasting-eventi")
 def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
@@ -1260,20 +1304,25 @@ def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
         segmentazione.sort(key=lambda x: x["margine_totale"], reverse=True)
 
         # Previsione per tipologia: basata solo su richieste confermate (approvata/completata),
-        # cioè eventi realmente accaduti, per dare una stima più solida di cosa aspettarsi
-        # da una nuova richiesta della stessa tipologia. L'affidabilità viene segnalata
-        # esplicitamente in base al numero di eventi disponibili, per onestà statistica:
-        # con pochi eventi la media è poco significativa e va presentata come tale.
+        # cioè eventi realmente accaduti, per dare una stima solida di cosa aspettarsi da una
+        # nuova richiesta della stessa tipologia. Per ciascuna tipologia si tenta un SARIMAX
+        # reale su margine, dimensione attesa e conteggio mensile eventi; se i punti disponibili
+        # sono troppo pochi per il modello (o il fit fallisce numericamente), si ricade sulla
+        # media storica, segnalando esplicitamente il metodo usato per ogni valore: questo evita
+        # di presentare come "previsione modellata" un numero che la matematica non sostiene
+        # ancora con questi dati, mantenendo comunque sempre un risultato utile da mostrare.
         previsioni_tipologia = {}
         for r in confermate:
             tip = r["tipologia_evento"]
             if tip not in previsioni_tipologia:
-                previsioni_tipologia[tip] = {"dimensioni": [], "saturazioni": [], "margini": []}
+                previsioni_tipologia[tip] = {"dimensioni": [], "saturazioni": [], "margini": [], "date": []}
             if r.get("dimensione_attesa") is not None:
                 previsioni_tipologia[tip]["dimensioni"].append(r["dimensione_attesa"])
             if r.get("tasso_saturazione_stimato") is not None:
                 previsioni_tipologia[tip]["saturazioni"].append(r["tasso_saturazione_stimato"])
             previsioni_tipologia[tip]["margini"].append(margine_effettivo(r))
+            if r.get("data_inizio"):
+                previsioni_tipologia[tip]["date"].append(r["data_inizio"])
 
         def media(lista):
             return round(sum(lista) / len(lista), 1) if lista else None
@@ -1289,13 +1338,23 @@ def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
         previsione_per_tipologia = []
         for tip, dati in previsioni_tipologia.items():
             n_eventi = len(dati["margini"])
+
+            margine_sarimax, usato_margine_sarimax = tenta_sarimax_su_serie(dati["margini"])
+            dimensione_sarimax, usato_dimensione_sarimax = tenta_sarimax_su_serie(dati["dimensioni"])
+            serie_mensile = conta_eventi_per_mese(dati["date"])
+            eventi_futuri_sarimax, usato_eventi_sarimax = tenta_sarimax_su_serie(serie_mensile)
+
             previsione_per_tipologia.append({
                 "tipologia_evento": tip,
                 "n_eventi_storici": n_eventi,
                 "affidabilita": livello_affidabilita(n_eventi),
-                "dimensione_media_attesa": media(dati["dimensioni"]),
+                "dimensione_media_attesa": dimensione_sarimax if usato_dimensione_sarimax else media(dati["dimensioni"]),
+                "dimensione_metodo": "sarimax" if usato_dimensione_sarimax else "media_storica",
                 "saturazione_media_pct": media(dati["saturazioni"]),
-                "margine_medio": media(dati["margini"])
+                "margine_medio": margine_sarimax if usato_margine_sarimax else media(dati["margini"]),
+                "margine_metodo": "sarimax" if usato_margine_sarimax else "media_storica",
+                "eventi_previsti_prossimo_mese": eventi_futuri_sarimax if usato_eventi_sarimax else None,
+                "eventi_metodo": "sarimax" if usato_eventi_sarimax else "dati_insufficienti"
             })
         previsione_per_tipologia.sort(key=lambda x: x["n_eventi_storici"], reverse=True)
 
