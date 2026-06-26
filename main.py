@@ -1445,3 +1445,49 @@ def verifica_disponibilita_evento(spazio_id: int, data_inizio: str, data_fine: s
     except Exception as e:
         print(f"Errore verifica disponibilità evento: {e}")
         return {"errore": str(e)}
+
+        # ---- DYNAMIC PRICING: SUGGERIMENTO PER TIPOLOGIA ----
+SOGLIA_SATURAZIONE_DYNAMIC_PRICING = 70
+
+@app.get("/dynamic-pricing-eventi")
+def dynamic_pricing_eventi(sito_id: int, tipologia_evento: str):
+    try:
+        richieste_resp = supabase.table("richieste_eventi").select("tasso_saturazione_stimato, dimensione_attesa") \
+            .eq("sito_id", sito_id).eq("tipologia_evento", tipologia_evento) \
+            .in_("stato_richiesta", ["approvata", "completata"]).execute()
+        richieste = richieste_resp.data or []
+
+        saturazioni = [r["tasso_saturazione_stimato"] for r in richieste if r.get("tasso_saturazione_stimato") is not None]
+
+        if not saturazioni:
+            return {"suggerimento_disponibile": False, "n_eventi_storici": 0}
+
+        saturazione_media = round(sum(saturazioni) / len(saturazioni), 1)
+        sopra_soglia = saturazione_media >= SOGLIA_SATURAZIONE_DYNAMIC_PRICING
+
+        suggerimento = None
+        if sopra_soglia:
+            if saturazione_media >= 100:
+                suggerimento = (
+                    f"Gli eventi di tipo \"{tipologia_evento}\" in questo sito hanno storicamente superato la capacità "
+                    f"dello spazio (saturazione media {saturazione_media}%). Valuta uno spazio più ampio o un secondo "
+                    f"slot/data per distribuire la domanda."
+                )
+            else:
+                suggerimento = (
+                    f"Gli eventi di tipo \"{tipologia_evento}\" in questo sito registrano una saturazione media alta "
+                    f"({saturazione_media}%). La domanda sembra superare l'offerta disponibile: valuta un prezzo "
+                    f"del biglietto più alto rispetto al listino standard, per regolare l'afflusso e aumentare il margine."
+                )
+
+        return {
+            "suggerimento_disponibile": sopra_soglia,
+            "n_eventi_storici": len(saturazioni),
+            "saturazione_media_pct": saturazione_media,
+            "soglia_pct": SOGLIA_SATURAZIONE_DYNAMIC_PRICING,
+            "suggerimento": suggerimento
+        }
+
+    except Exception as e:
+        print(f"Errore dynamic pricing eventi: {e}")
+        return {"errore": str(e)}
