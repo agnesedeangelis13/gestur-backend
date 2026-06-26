@@ -1180,3 +1180,99 @@ def approva_richiesta_evento(richiesta_id: int):
     except Exception as e:
         print(f"Errore approvazione richiesta evento {richiesta_id}: {e}")
         return {"errore": str(e)}
+
+        # ---- REVENUE FORECASTING EVENTI ----
+@app.get("/revenue-forecasting-eventi/{comune_id}")
+def revenue_forecasting_eventi(comune_id: str, sito_id: int = None):
+    try:
+        siti_query = supabase.table("siti_culturali").select("id, nome_sito").eq("comune_id", comune_id)
+        siti_resp = siti_query.execute()
+        siti = siti_resp.data or []
+        if not siti:
+            return {"errore": "Nessun sito trovato per questo comune"}
+
+        siti_map = {s["id"]: s["nome_sito"] for s in siti}
+        sito_ids = [s["id"] for s in siti] if sito_id is None else [sito_id]
+
+        richieste_resp = supabase.table("richieste_eventi").select("*").in_("sito_id", sito_ids).execute()
+        richieste = richieste_resp.data or []
+
+        if not richieste:
+            return {"errore": "Nessuna richiesta evento trovata per questo comune/sito"}
+
+        def margine_effettivo(r):
+            # Usa il margine reale se il consuntivo è stato inserito, altrimenti ricade sulla stima:
+            # questo permette di avere sempre un numero utile anche prima che l'evento si sia svolto.
+            if r.get("consuntivo_inserito") and r.get("margine_netto_reale") is not None:
+                return r["margine_netto_reale"]
+            return r.get("margine_netto_stimato") or 0
+
+        confermate = [r for r in richieste if r["stato_richiesta"] in ("approvata", "completata")]
+        in_valutazione = [r for r in richieste if r["stato_richiesta"] == "in_valutazione"]
+        rifiutate = [r for r in richieste if r["stato_richiesta"] == "rifiutata"]
+
+        valore_confermato = round(sum(margine_effettivo(r) for r in confermate), 2)
+        valore_in_valutazione = round(sum(r.get("margine_netto_stimato") or 0 for r in in_valutazione), 2)
+        valore_perso_rifiutate = round(sum(r.get("margine_netto_stimato") or 0 for r in rifiutate), 2)
+
+        n_con_consuntivo = sum(1 for r in confermate if r.get("consuntivo_inserito"))
+
+        # Confronto stima vs reale, solo sulle richieste che hanno già un consuntivo inserito
+        confronto_stima_reale = []
+        for r in confermate:
+            if r.get("consuntivo_inserito") and r.get("margine_netto_reale") is not None:
+                stimato = r.get("margine_netto_stimato") or 0
+                reale = r["margine_netto_reale"]
+                confronto_stima_reale.append({
+                    "id": r["id"],
+                    "nome_evento": r["nome_evento"],
+                    "tipologia_evento": r["tipologia_evento"],
+                    "margine_stimato": stimato,
+                    "margine_reale": reale,
+                    "scostamento": round(reale - stimato, 2),
+                    "scostamento_pct": round(((reale - stimato) / abs(stimato)) * 100, 1) if stimato else None
+                })
+
+        # Segmentazione per tipologia: su tutte le richieste, indipendentemente dallo stato,
+        # per capire quali tipologie generano più valore E quali saturano di più gli spazi.
+        segmenti = {}
+        for r in richieste:
+            tip = r["tipologia_evento"]
+            if tip not in segmenti:
+                segmenti[tip] = {"tipologia_evento": tip, "conteggio": 0, "margine_totale": 0, "saturazioni": []}
+            segmenti[tip]["conteggio"] += 1
+            segmenti[tip]["margine_totale"] += margine_effettivo(r)
+            if r.get("tasso_saturazione_stimato") is not None:
+                segmenti[tip]["saturazioni"].append(r["tasso_saturazione_stimato"])
+
+        segmentazione = []
+        for tip, dati in segmenti.items():
+            saturazione_media = round(sum(dati["saturazioni"]) / len(dati["saturazioni"]), 1) if dati["saturazioni"] else None
+            segmentazione.append({
+                "tipologia_evento": tip,
+                "conteggio": dati["conteggio"],
+                "margine_totale": round(dati["margine_totale"], 2),
+                "margine_medio": round(dati["margine_totale"] / dati["conteggio"], 2) if dati["conteggio"] else 0,
+                "saturazione_media_pct": saturazione_media
+            })
+        segmentazione.sort(key=lambda x: x["margine_totale"], reverse=True)
+
+        return {
+            "comune_id": comune_id,
+            "sito_id": sito_id,
+            "siti_inclusi": [siti_map[sid] for sid in sito_ids if sid in siti_map],
+            "totale_richieste": len(richieste),
+            "valore_confermato": valore_confermato,
+            "n_richieste_confermate": len(confermate),
+            "n_con_consuntivo_inserito": n_con_consuntivo,
+            "valore_in_valutazione": valore_in_valutazione,
+            "n_richieste_in_valutazione": len(in_valutazione),
+            "valore_perso_rifiutate": valore_perso_rifiutate,
+            "n_richieste_rifiutate": len(rifiutate),
+            "segmentazione_per_tipologia": segmentazione,
+            "confronto_stima_reale": confronto_stima_reale
+        }
+
+    except Exception as e:
+        print(f"Errore revenue forecasting eventi comune {comune_id}: {e}")
+        return {"errore": str(e)}
