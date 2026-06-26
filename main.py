@@ -1182,14 +1182,16 @@ def approva_richiesta_evento(richiesta_id: int):
         return {"errore": str(e)}
 
         # ---- REVENUE FORECASTING EVENTI ----
-@app.get("/revenue-forecasting-eventi/{comune_id}")
-def revenue_forecasting_eventi(comune_id: str, sito_id: int = None):
+@app.get("/revenue-forecasting-eventi")
+def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
     try:
-        siti_query = supabase.table("siti_culturali").select("id, nome_sito").eq("comune_id", comune_id)
+        siti_query = supabase.table("siti_culturali").select("id, nome_sito, comune_id")
+        if comune_id:
+            siti_query = siti_query.eq("comune_id", comune_id)
         siti_resp = siti_query.execute()
         siti = siti_resp.data or []
         if not siti:
-            return {"errore": "Nessun sito trovato per questo comune"}
+            return {"errore": "Nessun sito trovato"}
 
         siti_map = {s["id"]: s["nome_sito"] for s in siti}
         sito_ids = [s["id"] for s in siti] if sito_id is None else [sito_id]
@@ -1198,7 +1200,7 @@ def revenue_forecasting_eventi(comune_id: str, sito_id: int = None):
         richieste = richieste_resp.data or []
 
         if not richieste:
-            return {"errore": "Nessuna richiesta evento trovata per questo comune/sito"}
+            return {"errore": "Nessuna richiesta evento trovata"}
 
         def margine_effettivo(r):
             # Usa il margine reale se il consuntivo è stato inserito, altrimenti ricade sulla stima:
@@ -1300,6 +1302,7 @@ def revenue_forecasting_eventi(comune_id: str, sito_id: int = None):
         return {
             "comune_id": comune_id,
             "sito_id": sito_id,
+            "vista_globale": comune_id is None,
             "siti_inclusi": [siti_map[sid] for sid in sito_ids if sid in siti_map],
             "totale_richieste": len(richieste),
             "valore_confermato": valore_confermato,
