@@ -1379,3 +1379,69 @@ def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
     except Exception as e:
         print(f"Errore revenue forecasting eventi comune {comune_id}: {e}")
         return {"errore": str(e)}
+
+        # ---- CALENDARIO STRATEGICO: VERIFICA DISPONIBILITA EVENTO ----
+@app.get("/verifica-disponibilita-evento")
+def verifica_disponibilita_evento(spazio_id: int, data_inizio: str, data_fine: str, sito_id: int, richiesta_id: int = None):
+    try:
+        # Vincolo rigido: lo stesso spazio non può ospitare due eventi confermati
+        # con date che si sovrappongono, anche se nello stesso giorno c'è spazio per
+        # eventi diversi in spazi diversi dello stesso sito.
+        query = supabase.table("richieste_eventi").select("*") \
+            .eq("spazio_id", spazio_id) \
+            .in_("stato_richiesta", ["approvata", "completata"]) \
+            .lte("data_inizio", data_fine) \
+            .gte("data_fine", data_inizio)
+        if richiesta_id:
+            query = query.neq("id", richiesta_id)
+        conflitti_resp = query.execute()
+        conflitti = conflitti_resp.data or []
+
+        risultato_conflitto = None
+        if conflitti:
+            c = conflitti[0]
+            risultato_conflitto = {
+                "nome_evento": c["nome_evento"],
+                "data_inizio": c["data_inizio"],
+                "data_fine": c["data_fine"],
+                "stato_richiesta": c["stato_richiesta"]
+            }
+
+        # Suggerimento non bloccante: confronta l'affluenza storica delle presenze
+        # ordinarie nello stesso range di giorni (stesso mese/giorno, anni precedenti
+        # se disponibili) con la media generale del sito, per segnalare se il periodo
+        # scelto per l'evento coincide con un periodo già di alta affluenza turistica.
+        alta_affluenza = False
+        scostamento_pct = None
+        try:
+            tutte_presenze_resp = supabase.table("presenza").select("data, gruppo").eq("sito_id", sito_id).execute()
+            tutte_presenze = tutte_presenze_resp.data or []
+            if tutte_presenze:
+                df = pd.DataFrame(tutte_presenze)
+                df["data"] = pd.to_datetime(df["data"])
+                aggregato_giorno = df.groupby("data")["gruppo"].sum()
+                media_generale = aggregato_giorno.mean()
+
+                inizio_dt = pd.to_datetime(data_inizio)
+                fine_dt = pd.to_datetime(data_fine)
+                # Stesso intervallo di mese/giorno, su qualsiasi anno presente nello storico
+                periodo_storico = aggregato_giorno[
+                    aggregato_giorno.index.map(lambda d: (d.month, d.day) >= (inizio_dt.month, inizio_dt.day) and (d.month, d.day) <= (fine_dt.month, fine_dt.day))
+                ]
+                if len(periodo_storico) > 0 and media_generale > 0:
+                    media_periodo = periodo_storico.mean()
+                    scostamento_pct = round(((media_periodo - media_generale) / media_generale) * 100, 1)
+                    alta_affluenza = scostamento_pct >= 30
+        except Exception as e:
+            print(f"Errore calcolo affluenza storica per verifica disponibilità: {e}")
+
+        return {
+            "conflitto": risultato_conflitto is not None,
+            "dettaglio_conflitto": risultato_conflitto,
+            "alta_affluenza_periodo": alta_affluenza,
+            "scostamento_affluenza_pct": scostamento_pct
+        }
+
+    except Exception as e:
+        print(f"Errore verifica disponibilità evento: {e}")
+        return {"errore": str(e)}
