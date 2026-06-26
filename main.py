@@ -1225,6 +1225,67 @@ def conta_eventi_per_mese(date_lista):
     return serie
 
 
+def costruisci_esogene_evento(date_lista, sito_id, regione="Lazio"):
+    """Costruisce le variabili esogene (festività, weekend, meteo) per una lista di date di
+    eventi storici, riusando le stesse fonti dati già presenti nel sistema (festivita_regionali,
+    meteo_giornaliero) invece di duplicarle: stessa logica di genera_variabili_esogene, applicata
+    alle date specifiche in cui si sono svolti gli eventi piuttosto che a un range continuo."""
+    date_parsed = [pd.to_datetime(d) for d in date_lista]
+    date_str = [d.strftime("%Y-%m-%d") for d in date_parsed]
+
+    try:
+        fest = supabase.table("festivita_regionali").select("data").eq("regione", regione).in_("data", date_str).execute()
+        date_festivita = set(f["data"] for f in fest.data)
+    except:
+        date_festivita = set()
+
+    meteo_map = {}
+    try:
+        meteo = supabase.table("meteo_giornaliero").select("data, condizione").eq("sito_id", sito_id).in_("data", date_str).execute()
+        for m in meteo.data:
+            meteo_map[m["data"]] = m
+    except:
+        pass
+
+    exog = []
+    for d, ds in zip(date_parsed, date_str):
+        is_festivo = 1 if ds in date_festivita else 0
+        is_weekend = 1 if d.weekday() >= 5 else 0
+        condizione = meteo_map.get(ds, {}).get("condizione")
+        is_pioggia = 1 if condizione == "pioggia" else 0
+        exog.append([is_festivo, is_weekend, is_pioggia])
+    return np.array(exog)
+
+
+def tenta_sarimax_con_esogene(valori, date_lista, sito_id, scenario_esogeno, regione="Lazio"):
+    """Versione del SARIMAX per eventi che include variabili esogene (festività, weekend, meteo),
+    analoga a simula_scenario per le presenze ma applicata a una serie di eventi sparsi nel tempo
+    anziché a una serie settimanale continua. Richiede più punti della versione semplice perché
+    il modello deve stimare anche i coefficienti delle 3 variabili esogene: sotto questa soglia
+    il fit non avrebbe gradi di libertà sufficienti, quindi si segnala onestamente l'impossibilità
+    invece di azzardare un numero che la matematica non sostiene con questi dati.
+    """
+    MINIMO_PUNTI_CON_ESOGENE = 10
+    if len(valori) < MINIMO_PUNTI_CON_ESOGENE:
+        return None, False, len(valori), MINIMO_PUNTI_CON_ESOGENE
+    try:
+        serie = pd.Series(valori)
+        exog_train = costruisci_esogene_evento(date_lista, sito_id, regione)
+        modello = SARIMAX(serie, exog=exog_train, order=(1, 1, 1), enforce_stationarity=False, enforce_invertibility=False)
+        risultato = modello.fit(disp=False)
+        exog_scenario = np.array([[
+            scenario_esogeno.get("is_festivo", 0),
+            scenario_esogeno.get("is_weekend", 0),
+            scenario_esogeno.get("is_pioggia", 0),
+        ]])
+        previsione = risultato.forecast(steps=1, exog=exog_scenario)
+        valore_previsto = float(previsione.iloc[-1])
+        return max(0, round(valore_previsto, 1)), True, len(valori), MINIMO_PUNTI_CON_ESOGENE
+    except Exception as e:
+        print(f"SARIMAX con esogene fallito su serie di {len(valori)} punti: {e}")
+        return None, False, len(valori), MINIMO_PUNTI_CON_ESOGENE
+
+
         # ---- REVENUE FORECASTING EVENTI ----
 @app.get("/revenue-forecasting-eventi")
 def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
@@ -1490,4 +1551,60 @@ def dynamic_pricing_eventi(sito_id: int, tipologia_evento: str):
 
     except Exception as e:
         print(f"Errore dynamic pricing eventi: {e}")
+        return {"errore": str(e)}
+
+        # ---- SIMULATORE SCENARIO EVENTI (SARIMAX con esogene) ----
+@app.post("/simula-scenario-evento")
+def simula_scenario_evento(payload: dict):
+    try:
+        sito_id = int(payload.get("sito_id"))
+        tipologia_evento = payload.get("tipologia_evento")
+        scenario = payload.get("scenario", {})
+
+        richieste_resp = supabase.table("richieste_eventi").select(
+            "data_inizio, dimensione_attesa, margine_netto_stimato, margine_netto_reale, consuntivo_inserito"
+        ).eq("sito_id", sito_id).eq("tipologia_evento", tipologia_evento) \
+         .in_("stato_richiesta", ["approvata", "completata"]).order("data_inizio").execute()
+        richieste = richieste_resp.data or []
+
+        if not richieste:
+            return {"errore": "Nessun evento storico confermato per questa combinazione sito/tipologia"}
+
+        date_lista = [r["data_inizio"] for r in richieste]
+        dimensioni = [r["dimensione_attesa"] for r in richieste if r.get("dimensione_attesa") is not None]
+        margini = [
+            r["margine_netto_reale"] if r.get("consuntivo_inserito") and r.get("margine_netto_reale") is not None
+            else (r.get("margine_netto_stimato") or 0)
+            for r in richieste
+        ]
+
+        dimensione_prevista, usato_sarimax_dim, n_punti, minimo_richiesto = tenta_sarimax_con_esogene(
+            dimensioni, date_lista[:len(dimensioni)], sito_id, scenario
+        )
+        margine_previsto, usato_sarimax_margine, _, _ = tenta_sarimax_con_esogene(
+            margini, date_lista, sito_id, scenario
+        )
+
+        risultato = {
+            "tipologia_evento": tipologia_evento,
+            "n_eventi_storici": n_punti,
+            "minimo_punti_richiesti": minimo_richiesto,
+            "sarimax_disponibile": usato_sarimax_dim or usato_sarimax_margine,
+            "dimensione_prevista": dimensione_prevista,
+            "dimensione_metodo": "sarimax" if usato_sarimax_dim else "dati_insufficienti",
+            "margine_previsto": margine_previsto,
+            "margine_metodo": "sarimax" if usato_sarimax_margine else "dati_insufficienti",
+        }
+
+        if not usato_sarimax_dim and not usato_sarimax_margine:
+            risultato["messaggio"] = (
+                f"Servono almeno {minimo_richiesto} eventi storici confermati di tipo \"{tipologia_evento}\" in questo sito "
+                f"per attivare la previsione SARIMAX basata su meteo/festività/weekend. Al momento ne sono disponibili "
+                f"{n_punti}. La previsione tornerà disponibile automaticamente non appena i dati saranno sufficienti."
+            )
+
+        return risultato
+
+    except Exception as e:
+        print(f"Errore simulazione scenario evento: {e}")
         return {"errore": str(e)}
