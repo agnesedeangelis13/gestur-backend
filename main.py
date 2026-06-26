@@ -1226,8 +1226,8 @@ def conta_eventi_per_mese(date_lista):
 
 
 def costruisci_esogene_evento(date_lista, sito_id, regione="Lazio"):
-    """Costruisce le variabili esogene (festività, weekend, meteo) per una lista di date di
-    eventi storici, riusando le stesse fonti dati già presenti nel sistema (festivita_regionali,
+    """Costruisce le variabili esogene (festività, weekend, meteo completo) per una lista di date
+    di eventi storici, riusando le stesse fonti dati già presenti nel sistema (festivita_regionali,
     meteo_giornaliero) invece di duplicarle: stessa logica di genera_variabili_esogene, applicata
     alle date specifiche in cui si sono svolti gli eventi piuttosto che a un range continuo."""
     date_parsed = [pd.to_datetime(d) for d in date_lista]
@@ -1241,7 +1241,7 @@ def costruisci_esogene_evento(date_lista, sito_id, regione="Lazio"):
 
     meteo_map = {}
     try:
-        meteo = supabase.table("meteo_giornaliero").select("data, condizione").eq("sito_id", sito_id).in_("data", date_str).execute()
+        meteo = supabase.table("meteo_giornaliero").select("data, condizione, temperatura_max").eq("sito_id", sito_id).in_("data", date_str).execute()
         for m in meteo.data:
             meteo_map[m["data"]] = m
     except:
@@ -1251,21 +1251,26 @@ def costruisci_esogene_evento(date_lista, sito_id, regione="Lazio"):
     for d, ds in zip(date_parsed, date_str):
         is_festivo = 1 if ds in date_festivita else 0
         is_weekend = 1 if d.weekday() >= 5 else 0
-        condizione = meteo_map.get(ds, {}).get("condizione")
+        m = meteo_map.get(ds, {})
+        condizione = m.get("condizione")
         is_pioggia = 1 if condizione == "pioggia" else 0
-        exog.append([is_festivo, is_weekend, is_pioggia])
+        is_neve = 1 if condizione == "neve" else 0
+        is_sole = 1 if condizione == "sereno" or condizione == "sole" else 0
+        temperatura = m.get("temperatura_max", 20.0) or 20.0
+        exog.append([is_festivo, is_weekend, is_pioggia, is_neve, is_sole, temperatura])
     return np.array(exog)
 
 
 def tenta_sarimax_con_esogene(valori, date_lista, sito_id, scenario_esogeno, regione="Lazio"):
-    """Versione del SARIMAX per eventi che include variabili esogene (festività, weekend, meteo),
-    analoga a simula_scenario per le presenze ma applicata a una serie di eventi sparsi nel tempo
-    anziché a una serie settimanale continua. Richiede più punti della versione semplice perché
-    il modello deve stimare anche i coefficienti delle 3 variabili esogene: sotto questa soglia
-    il fit non avrebbe gradi di libertà sufficienti, quindi si segnala onestamente l'impossibilità
-    invece di azzardare un numero che la matematica non sostiene con questi dati.
+    """Versione del SARIMAX per eventi che include variabili esogene complete (festività, weekend,
+    pioggia, neve, sole, temperatura), analoga a simula_scenario per le presenze ma applicata a una
+    serie di eventi sparsi nel tempo anziché a una serie settimanale continua. Richiede più punti
+    della versione semplice perché il modello deve stimare anche i coefficienti delle 6 variabili
+    esogene: sotto questa soglia il fit non avrebbe gradi di libertà sufficienti, quindi si segnala
+    onestamente l'impossibilità invece di azzardare un numero che la matematica non sostiene con
+    questi dati.
     """
-    MINIMO_PUNTI_CON_ESOGENE = 10
+    MINIMO_PUNTI_CON_ESOGENE = 16
     if len(valori) < MINIMO_PUNTI_CON_ESOGENE:
         return None, False, len(valori), MINIMO_PUNTI_CON_ESOGENE
     try:
@@ -1277,6 +1282,9 @@ def tenta_sarimax_con_esogene(valori, date_lista, sito_id, scenario_esogeno, reg
             scenario_esogeno.get("is_festivo", 0),
             scenario_esogeno.get("is_weekend", 0),
             scenario_esogeno.get("is_pioggia", 0),
+            scenario_esogeno.get("is_neve", 0),
+            scenario_esogeno.get("is_sole", 0),
+            scenario_esogeno.get("temperatura", 20.0),
         ]])
         previsione = risultato.forecast(steps=1, exog=exog_scenario)
         valore_previsto = float(previsione.iloc[-1])
