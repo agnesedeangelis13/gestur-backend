@@ -2190,32 +2190,63 @@ def get_swot_dinamica(comune_id: str):
         return {"errore": str(e)}
 
 
+def esegui_snapshot_swot(comune_id):
+    """Calcola la SWOT dinamica corrente per un comune e la salva come
+    snapshot permanente in swot_storico. Funzione interna riutilizzata sia
+    dall'endpoint per singolo comune che da quello che itera su tutti i comuni."""
+    swot = get_swot_dinamica(comune_id)
+    if "errore" in swot:
+        return {"errore": swot["errore"], "comune_id": comune_id}
+
+    righe_da_salvare = []
+    for quadrante_lista in [swot["forze"], swot["debolezze"], swot["opportunita"], swot["minacce"]]:
+        for voce in quadrante_lista:
+            righe_da_salvare.append({
+                "piano_id": swot["piano_id"],
+                "comune_id": comune_id,
+                "quadrante": voce["quadrante"],
+                "voce": voce["voce"],
+                "dato_sottostante": voce["dato_sottostante"],
+                "valore_numerico": voce["valore_numerico"],
+            })
+
+    if not righe_da_salvare:
+        return {"status": "nessuna voce da salvare", "n_voci": 0, "comune_id": comune_id}
+
+    supabase.table("swot_storico").insert(righe_da_salvare).execute()
+    return {"status": "salvato", "n_voci": len(righe_da_salvare), "comune_id": comune_id}
+
+
 @app.post("/swot-dinamica/{comune_id}/salva-snapshot")
 def salva_snapshot_swot(comune_id: str):
     """Salva uno snapshot permanente della SWOT corrente in swot_storico,
     permettendo di confrontare nel tempo come evolve l'analisi."""
     try:
-        swot = get_swot_dinamica(comune_id)
-        if "errore" in swot:
-            return swot
-
-        righe_da_salvare = []
-        for quadrante_lista in [swot["forze"], swot["debolezze"], swot["opportunita"], swot["minacce"]]:
-            for voce in quadrante_lista:
-                righe_da_salvare.append({
-                    "piano_id": swot["piano_id"],
-                    "comune_id": comune_id,
-                    "quadrante": voce["quadrante"],
-                    "voce": voce["voce"],
-                    "dato_sottostante": voce["dato_sottostante"],
-                    "valore_numerico": voce["valore_numerico"],
-                })
-
-        if not righe_da_salvare:
-            return {"status": "nessuna voce da salvare", "n_voci": 0}
-
-        supabase.table("swot_storico").insert(righe_da_salvare).execute()
-        return {"status": "salvato", "n_voci": len(righe_da_salvare)}
+        return esegui_snapshot_swot(comune_id)
     except Exception as e:
         print(f"Errore salvataggio snapshot SWOT comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/swot-dinamica/salva-snapshot-tutti")
+def salva_snapshot_swot_tutti():
+    """Salva lo snapshot SWOT per tutti i comuni che hanno un piano
+    strategico attivo. Pensato per essere richiamato da un cron job mensile,
+    analogamente a come /aggiorna-previsioni viene richiamato settimanalmente
+    per le previsioni di affluenza."""
+    try:
+        piani_resp = supabase.table("piani_strategici").select("comune_id").neq("stato", "archiviato").execute()
+        comuni = list({p["comune_id"] for p in (piani_resp.data or [])})
+
+        risultati = []
+        for comune_id in comuni:
+            esito = esegui_snapshot_swot(comune_id)
+            risultati.append(esito)
+
+        return {
+            "comuni_processati": len(comuni),
+            "risultati": risultati
+        }
+    except Exception as e:
+        print(f"Errore snapshot SWOT tutti i comuni: {e}")
         return {"errore": str(e)}
