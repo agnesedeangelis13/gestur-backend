@@ -1617,3 +1617,199 @@ def simula_scenario_evento(payload: dict):
     except Exception as e:
         print(f"Errore simulazione scenario evento: {e}")
         return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO DELLA DESTINAZIONE — Sezione 1
+# ============================================================
+
+def ottieni_o_crea_piano_attivo(comune_id_str):
+    """Recupera il piano strategico attivo per il comune. Se non esiste,
+    lo crea automaticamente con titolo e periodo di default (anno corrente
+    -> anno corrente + 2), in stato 'bozza', per non bloccare l'accesso
+    alla sezione in attesa di un setup manuale preliminare."""
+    esistente_resp = supabase.table("piani_strategici").select("*") \
+        .eq("comune_id", comune_id_str).neq("stato", "archiviato") \
+        .order("creato_il", desc=True).limit(1).execute()
+    if esistente_resp.data:
+        return esistente_resp.data[0]
+
+    anno_corrente = datetime.now().year
+    nuovo_piano = {
+        "comune_id": comune_id_str,
+        "titolo": f"Piano Strategico {anno_corrente}-{anno_corrente + 2}",
+        "anno_inizio": anno_corrente,
+        "anno_fine": anno_corrente + 2,
+        "stato": "bozza",
+    }
+    creato_resp = supabase.table("piani_strategici").insert(nuovo_piano).execute()
+    return creato_resp.data[0]
+
+
+def ottieni_siti_comune(comune_id_str):
+    """Recupera tutti i siti culturali appartenenti a un comune."""
+    siti_resp = supabase.table("siti_culturali").select("id, nome_sito") \
+        .eq("comune_id", comune_id_str).execute()
+    return siti_resp.data or []
+
+
+@app.get("/piano-strategico/{comune_id}")
+def get_piano_strategico(comune_id: str):
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+        return piano
+    except Exception as e:
+        print(f"Errore recupero piano strategico comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.put("/piano-strategico/{piano_id}")
+def aggiorna_piano_strategico(piano_id: int, payload: dict):
+    """Permette di rinominare il piano o modificarne il periodo,
+    senza toccare i dati delle sezioni già collegate a piano_id."""
+    try:
+        campi_consentiti = {"titolo", "anno_inizio", "anno_fine", "stato"}
+        aggiornamento = {k: v for k, v in payload.items() if k in campi_consentiti}
+        if not aggiornamento:
+            return {"errore": "Nessun campo valido da aggiornare"}
+        supabase.table("piani_strategici").update(aggiornamento).eq("id", piano_id).execute()
+        return {"status": "aggiornato"}
+    except Exception as e:
+        print(f"Errore aggiornamento piano strategico {piano_id}: {e}")
+        return {"errore": str(e)}
+
+
+SOGLIA_MESI_BENCHMARK_DATATO = 18
+
+@app.get("/benchmark-regionale/{comune_id}")
+def get_benchmark_regionale(comune_id: str):
+    """Calcola la crescita reale del comune (ultimi 12 mesi vs 12 mesi
+    precedenti, su tutti i siti del comune) e la confronta con l'ultimo
+    valore di benchmark regionale inserito manualmente. Segnala
+    onestamente se il dato esterno manca, è datato, o se lo storico
+    di presenze non è sufficiente per un confronto a 24 mesi."""
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+
+        siti = ottieni_siti_comune(comune_id)
+        if not siti:
+            return {"errore": "Nessun sito culturale trovato per questo comune"}
+        sito_ids = [s["id"] for s in siti]
+
+        oggi = datetime.now()
+        inizio_corrente = oggi - timedelta(days=365)
+        inizio_precedente = oggi - timedelta(days=730)
+
+        presenze_resp = supabase.table("presenza").select("data, gruppo") \
+            .in_("sito_id", sito_ids).gte("data", inizio_precedente.strftime("%Y-%m-%d")).execute()
+        presenze = presenze_resp.data or []
+
+        if not presenze:
+            return {"errore": "Nessun dato storico di presenze disponibile per questo comune"}
+
+        prima_data = min(pd.to_datetime(p["data"]) for p in presenze)
+        dati_sufficienti = prima_data <= pd.Timestamp(inizio_precedente)
+
+        crescita_propria_pct = None
+        visitatori_periodo_corrente = 0
+        visitatori_periodo_precedente = 0
+
+        if dati_sufficienti:
+            for p in presenze:
+                data_p = pd.to_datetime(p["data"])
+                gruppo = p.get("gruppo", 0) or 0
+                if data_p >= pd.Timestamp(inizio_corrente):
+                    visitatori_periodo_corrente += gruppo
+                elif data_p >= pd.Timestamp(inizio_precedente):
+                    visitatori_periodo_precedente += gruppo
+
+            if visitatori_periodo_precedente > 0:
+                crescita_propria_pct = round(
+                    ((visitatori_periodo_corrente - visitatori_periodo_precedente) / visitatori_periodo_precedente) * 100, 1
+                )
+
+        benchmark_resp = supabase.table("benchmark_regionali").select("*") \
+            .eq("piano_id", piano["id"]).order("anno_riferimento", desc=True).limit(1).execute()
+        benchmark = benchmark_resp.data[0] if benchmark_resp.data else None
+
+        avviso_benchmark = None
+        benchmark_datato = False
+        if not benchmark:
+            avviso_benchmark = (
+                "Nessun dato di benchmark regionale inserito. Aggiungi il valore di crescita regionale "
+                "più recente (es. da report ISTAT o osservatorio turistico regionale) per attivare il confronto."
+            )
+        else:
+            anni_da_inserimento = oggi.year - benchmark["anno_riferimento"]
+            mesi_stimati = anni_da_inserimento * 12
+            if mesi_stimati > SOGLIA_MESI_BENCHMARK_DATATO:
+                benchmark_datato = True
+                avviso_benchmark = (
+                    f"Il dato di benchmark regionale risale all'anno {benchmark['anno_riferimento']} "
+                    f"(fonte: {benchmark['fonte']}) ed è da considerarsi datato. Si raccomanda di aggiornarlo "
+                    f"con il report più recente disponibile."
+                )
+
+        confronto = None
+        if crescita_propria_pct is not None and benchmark and not benchmark_datato:
+            differenza = round(crescita_propria_pct - benchmark["crescita_arrivi_pct"], 1)
+            performance = "superiore" if differenza > 0 else "inferiore" if differenza < 0 else "in linea con"
+            confronto = (
+                f"La destinazione cresce del {crescita_propria_pct}% (ultimi 12 mesi vs 12 mesi precedenti, "
+                f"dati reali GesTur su {len(siti)} sito/i), una performance {performance} rispetto alla media "
+                f"regionale del {benchmark['crescita_arrivi_pct']}% (fonte: {benchmark['fonte']}, anno {benchmark['anno_riferimento']})."
+            )
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "crescita_propria_pct": crescita_propria_pct,
+            "dati_sufficienti": dati_sufficienti,
+            "visitatori_periodo_corrente": visitatori_periodo_corrente if dati_sufficienti else None,
+            "visitatori_periodo_precedente": visitatori_periodo_precedente if dati_sufficienti else None,
+            "benchmark": benchmark,
+            "benchmark_datato": benchmark_datato,
+            "avviso_benchmark": avviso_benchmark,
+            "confronto": confronto,
+            "nota_metodologica": (
+                "Il dato di crescita propria è calcolato sulle presenze reali registrate in GesTur per i siti "
+                "di questo comune (ingressi ai siti culturali). Il benchmark regionale misura un fenomeno diverso "
+                "(pernottamenti turistici in strutture ricettive a livello regionale) ed è inserito manualmente "
+                "dal comune sulla base di report ufficiali: il confronto è indicativo, non un dato omogeneo."
+            )
+        }
+    except Exception as e:
+        print(f"Errore benchmark regionale comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/benchmark-regionale")
+def crea_benchmark_regionale(payload: dict):
+    """Inserisce o aggiorna (upsert) il valore di benchmark regionale
+    per un anno di riferimento specifico, collegato al piano attivo del comune."""
+    try:
+        comune_id_str = payload.get("comune_id")
+        anno_riferimento = payload.get("anno_riferimento")
+        crescita_arrivi_pct = payload.get("crescita_arrivi_pct")
+        fonte = payload.get("fonte")
+        note = payload.get("note")
+
+        if not comune_id_str or anno_riferimento is None or crescita_arrivi_pct is None or not fonte:
+            return {"errore": "comune_id, anno_riferimento, crescita_arrivi_pct e fonte sono obbligatori"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        record = {
+            "piano_id": piano["id"],
+            "comune_id": comune_id_str,
+            "anno_riferimento": anno_riferimento,
+            "crescita_arrivi_pct": crescita_arrivi_pct,
+            "fonte": fonte,
+            "note": note,
+        }
+        supabase.table("benchmark_regionali").upsert(
+            record, on_conflict="piano_id,anno_riferimento"
+        ).execute()
+
+        return {"status": "salvato", "piano_id": piano["id"]}
+    except Exception as e:
+        print(f"Errore creazione benchmark regionale: {e}")
+        return {"errore": str(e)}
