@@ -1678,14 +1678,43 @@ def aggiorna_piano_strategico(piano_id: int, payload: dict):
 
 
 SOGLIA_MESI_BENCHMARK_DATATO = 18
+GIORNI_MINIMI_FINESTRA = 15  # sotto questa soglia per lato, il confronto è troppo rumoroso per essere mostrato
+GIORNI_MASSIMI_FINESTRA = 365  # mai oltre 12 mesi per lato, anche con storico molto lungo
+
+
+def calcola_finestra_adattiva(prima_data, oggi):
+    """Calcola una finestra di confronto (in giorni) che si adatta a quanto
+    storico è realmente disponibile, invece di richiedere sempre 24 mesi fissi.
+    Più dati ci sono, più la finestra si allarga (fino a un massimo di 12 mesi
+    per lato), e con essa cresce l'affidabilità del confronto. Sotto la soglia
+    minima, segnala onestamente che il dato non è ancora disponibile invece
+    di calcolare un numero che il rumore statistico renderebbe inaffidabile."""
+    giorni_totali_storico = (oggi - prima_data).days
+    giorni_finestra = giorni_totali_storico // 2
+
+    if giorni_finestra < GIORNI_MINIMI_FINESTRA:
+        return None, None
+
+    giorni_finestra = min(giorni_finestra, GIORNI_MASSIMI_FINESTRA)
+
+    if giorni_finestra < 60:
+        affidabilita = "bassa"
+    elif giorni_finestra < 180:
+        affidabilita = "media"
+    else:
+        affidabilita = "alta"
+
+    return giorni_finestra, affidabilita
+
 
 @app.get("/benchmark-regionale/{comune_id}")
 def get_benchmark_regionale(comune_id: str):
-    """Calcola la crescita reale del comune (ultimi 12 mesi vs 12 mesi
-    precedenti, su tutti i siti del comune) e la confronta con l'ultimo
-    valore di benchmark regionale inserito manualmente. Segnala
-    onestamente se il dato esterno manca, è datato, o se lo storico
-    di presenze non è sufficiente per un confronto a 24 mesi."""
+    """Calcola la crescita reale del comune con una finestra di confronto
+    adattiva (si allarga progressivamente man mano che lo storico di presenze
+    cresce, fino a un massimo di 12 mesi per lato) e la confronta con l'ultimo
+    valore di benchmark regionale inserito manualmente. Segnala onestamente
+    se il dato esterno manca, è datato, o se lo storico di presenze è ancora
+    troppo scarso per qualsiasi confronto significativo."""
     try:
         piano = ottieni_o_crea_piano_attivo(comune_id)
 
@@ -1695,24 +1724,26 @@ def get_benchmark_regionale(comune_id: str):
         sito_ids = [s["id"] for s in siti]
 
         oggi = datetime.now()
-        inizio_corrente = oggi - timedelta(days=365)
-        inizio_precedente = oggi - timedelta(days=730)
 
         presenze_resp = supabase.table("presenza").select("data, gruppo") \
-            .in_("sito_id", sito_ids).gte("data", inizio_precedente.strftime("%Y-%m-%d")).execute()
+            .in_("sito_id", sito_ids).execute()
         presenze = presenze_resp.data or []
 
         if not presenze:
             return {"errore": "Nessun dato storico di presenze disponibile per questo comune"}
 
         prima_data = min(pd.to_datetime(p["data"]) for p in presenze)
-        dati_sufficienti = prima_data <= pd.Timestamp(inizio_precedente)
+        giorni_finestra, affidabilita_crescita = calcola_finestra_adattiva(prima_data, oggi)
 
+        dati_sufficienti = giorni_finestra is not None
         crescita_propria_pct = None
         visitatori_periodo_corrente = 0
         visitatori_periodo_precedente = 0
 
         if dati_sufficienti:
+            inizio_corrente = oggi - timedelta(days=giorni_finestra)
+            inizio_precedente = oggi - timedelta(days=giorni_finestra * 2)
+
             for p in presenze:
                 data_p = pd.to_datetime(p["data"])
                 gruppo = p.get("gruppo", 0) or 0
@@ -1753,8 +1784,9 @@ def get_benchmark_regionale(comune_id: str):
             differenza = round(crescita_propria_pct - benchmark["crescita_arrivi_pct"], 1)
             performance = "superiore" if differenza > 0 else "inferiore" if differenza < 0 else "in linea con"
             confronto = (
-                f"La destinazione cresce del {crescita_propria_pct}% (ultimi 12 mesi vs 12 mesi precedenti, "
-                f"dati reali GesTur su {len(siti)} sito/i), una performance {performance} rispetto alla media "
+                f"La destinazione cresce del {crescita_propria_pct}% (ultimi {giorni_finestra} giorni vs "
+                f"{giorni_finestra} giorni precedenti, dati reali GesTur su {len(siti)} sito/i, affidabilità "
+                f"{affidabilita_crescita}), una performance {performance} rispetto alla media "
                 f"regionale del {benchmark['crescita_arrivi_pct']}% (fonte: {benchmark['fonte']}, anno {benchmark['anno_riferimento']})."
             )
 
@@ -1763,6 +1795,8 @@ def get_benchmark_regionale(comune_id: str):
             "comune_id": comune_id,
             "crescita_propria_pct": crescita_propria_pct,
             "dati_sufficienti": dati_sufficienti,
+            "giorni_finestra": giorni_finestra,
+            "affidabilita_crescita": affidabilita_crescita,
             "visitatori_periodo_corrente": visitatori_periodo_corrente if dati_sufficienti else None,
             "visitatori_periodo_precedente": visitatori_periodo_precedente if dati_sufficienti else None,
             "benchmark": benchmark,
@@ -1771,9 +1805,11 @@ def get_benchmark_regionale(comune_id: str):
             "confronto": confronto,
             "nota_metodologica": (
                 "Il dato di crescita propria è calcolato sulle presenze reali registrate in GesTur per i siti "
-                "di questo comune (ingressi ai siti culturali). Il benchmark regionale misura un fenomeno diverso "
-                "(pernottamenti turistici in strutture ricettive a livello regionale) ed è inserito manualmente "
-                "dal comune sulla base di report ufficiali: il confronto è indicativo, non un dato omogeneo."
+                "di questo comune (ingressi ai siti culturali), con una finestra di confronto che si allarga "
+                "progressivamente fino a un massimo di 12 mesi per lato man mano che lo storico cresce: più la "
+                "finestra è ampia, più alta è l'affidabilità del dato. Il benchmark regionale misura un fenomeno "
+                "diverso (pernottamenti turistici in strutture ricettive a livello regionale) ed è inserito "
+                "manualmente dal comune sulla base di report ufficiali: il confronto è indicativo, non un dato omogeneo."
             )
         }
     except Exception as e:
