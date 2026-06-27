@@ -250,6 +250,7 @@ def aggiorna_tariffe(sito_id: int, payload: dict):
 MACRO_PROVENIENZA = {
     "Italia": "Italia",
     "USA": "Nord America", "Canada": "Nord America",
+    "Residente": "Locale",
 }
 
 def mappa_provenienza_macro(provenienza):
