@@ -1849,3 +1849,373 @@ def crea_benchmark_regionale(payload: dict):
     except Exception as e:
         print(f"Errore creazione benchmark regionale: {e}")
         return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO — MATRICE SWOT DINAMICA
+# ============================================================
+
+SOGLIA_PCT_DEBOLEZZA = 15.0
+SOGLIA_MIN_SEGNALAZIONI_DEBOLEZZA = 3
+
+SOGLIA_PCT_FORZA = 85.0
+SOGLIA_MIN_RICHIESTE_FORZA = 5
+
+SOGLIA_PCT_PROVENIENZA_RILEVANTE = 15.0
+SOGLIA_PCT_CRESCITA_FASCIA = 10.0  # crescita minima (%) tra periodo precedente e corrente per considerare una fascia "in crescita"
+SOGLIA_PCT_CALO_FASCIA = -10.0     # calo massimo (%) per considerare una fascia/provenienza "in declino" da una posizione dominante
+SOGLIA_PCT_DOMINANZA_PRECEDENTE = 20.0  # quota minima nel periodo precedente per parlare di "posizione prima dominante"
+
+def nome_categoria(valore):
+    """Le categorie PIT sono salvate nel database già come etichette
+    leggibili (es. "Trasporti", "Wi-Fi e connettività"), non come chiavi
+    tecniche: non serve quindi nessuna mappatura, solo un fallback di
+    sicurezza nel caso il valore sia assente."""
+    return valore or "Non specificata"
+
+
+def genera_debolezze_da_pit(richieste_pit, sito_per_id=None):
+    """Categorie disservizio PIT ricorrenti sopra soglia minima diventano
+    debolezze, ciascuna sempre accompagnata dal conteggio grezzo che la
+    sostiene (numero di segnalazioni su totale disservizi)."""
+    conteggi = {}
+    totale_disservizi = 0
+    for r in richieste_pit:
+        cat = r.get("categorie_disservizio")
+        if not cat or cat.lower() == "altro":
+            continue
+        conteggi[cat] = conteggi.get(cat, 0) + 1
+        totale_disservizi += 1
+
+    if totale_disservizi == 0:
+        return []
+
+    debolezze = []
+    for cat, n in conteggi.items():
+        pct = round(n / totale_disservizi * 100, 1)
+        if pct >= SOGLIA_PCT_DEBOLEZZA and n >= SOGLIA_MIN_SEGNALAZIONI_DEBOLEZZA:
+            debolezze.append({
+                "quadrante": "debolezza",
+                "voce": f"{nome_categoria(cat)}",
+                "dato_sottostante": f"{n} segnalazioni di disservizio \"{nome_categoria(cat)}\" su {totale_disservizi} disservizi totali ({pct}%)",
+                "valore_numerico": pct,
+            })
+    debolezze.sort(key=lambda x: x["valore_numerico"], reverse=True)
+    return debolezze
+
+
+def genera_forze_da_pit(richieste_pit):
+    """Categorie richiesta PIT con alto tasso di esito 'soddisfatta'
+    diventano forze, sempre con il conteggio grezzo sottostante."""
+    per_categoria = {}
+    for r in richieste_pit:
+        cat = r.get("categoria")
+        if not cat or cat.lower() == "altro":
+            continue
+        if cat not in per_categoria:
+            per_categoria[cat] = {"soddisfatte": 0, "totali": 0}
+        per_categoria[cat]["totali"] += 1
+        if r.get("esito") == "soddisfatta":
+            per_categoria[cat]["soddisfatte"] += 1
+
+    forze = []
+    for cat, d in per_categoria.items():
+        if d["totali"] < SOGLIA_MIN_RICHIESTE_FORZA:
+            continue
+        pct = round(d["soddisfatte"] / d["totali"] * 100, 1)
+        if pct >= SOGLIA_PCT_FORZA:
+            forze.append({
+                "quadrante": "forza",
+                "voce": f"Gestione informativa: {nome_categoria(cat)}",
+                "dato_sottostante": f"{d['soddisfatte']} richieste con esito soddisfatta su {d['totali']} richieste di categoria \"{nome_categoria(cat)}\" ({pct}%)",
+                "valore_numerico": pct,
+            })
+    forze.sort(key=lambda x: x["valore_numerico"], reverse=True)
+    return forze
+
+
+def calcola_quota_periodo(presenze, chiave_estrazione, giorni_finestra, oggi):
+    """Calcola, per due periodi consecutivi di pari durata (giorni_finestra
+    ciascuno), la quota percentuale di presenze per ciascun valore estratto
+    da chiave_estrazione (es. provenienza_macro o singola fascia). Restituisce
+    un dizionario {valore: {"quota_precedente": ..., "quota_corrente": ..., "n_corrente": ..., "n_precedente": ...}}.
+    Usato sia per individuare opportunità (fasce in crescita) che minacce
+    (fasce in calo da posizione dominante)."""
+    inizio_corrente = oggi - timedelta(days=giorni_finestra)
+    inizio_precedente = oggi - timedelta(days=giorni_finestra * 2)
+
+    totale_corrente = 0
+    totale_precedente = 0
+    per_valore_corrente = {}
+    per_valore_precedente = {}
+
+    for r in presenze:
+        data_r = pd.to_datetime(r["data"])
+        gruppo = r.get("gruppo", 0) or 0
+        valori = chiave_estrazione(r)
+        if not valori:
+            continue
+        n_valori = len(valori)
+        quota_persona = gruppo / n_valori
+
+        if data_r >= pd.Timestamp(inizio_corrente):
+            totale_corrente += gruppo
+            for v in valori:
+                per_valore_corrente[v] = per_valore_corrente.get(v, 0) + quota_persona
+        elif data_r >= pd.Timestamp(inizio_precedente):
+            totale_precedente += gruppo
+            for v in valori:
+                per_valore_precedente[v] = per_valore_precedente.get(v, 0) + quota_persona
+
+    risultato = {}
+    tutti_i_valori = set(per_valore_corrente.keys()) | set(per_valore_precedente.keys())
+    for v in tutti_i_valori:
+        n_corrente = per_valore_corrente.get(v, 0)
+        n_precedente = per_valore_precedente.get(v, 0)
+        quota_corrente = round(n_corrente / totale_corrente * 100, 1) if totale_corrente > 0 else 0
+        quota_precedente = round(n_precedente / totale_precedente * 100, 1) if totale_precedente > 0 else 0
+        risultato[v] = {
+            "quota_corrente": quota_corrente,
+            "quota_precedente": quota_precedente,
+            "n_corrente": round(n_corrente, 1),
+            "n_precedente": round(n_precedente, 1),
+        }
+    return risultato, totale_corrente, totale_precedente
+
+
+def genera_opportunita_provenienza(presenze, richieste_pit, giorni_finestra, oggi):
+    """Opportunità di tipo A: una provenienza macro che rappresenta una quota
+    rilevante delle presenze, ma le cui richieste PIT hanno un tasso di esito
+    'soddisfatta' inferiore alla media generale — segnale di domanda presente
+    ma servizio non ancora adeguato (es. lacuna linguistica)."""
+    if giorni_finestra is None:
+        return []
+
+    def estrai_provenienza_macro(r):
+        prov = r.get("provenienza")
+        if not prov:
+            return []
+        return [mappa_provenienza_macro(prov)]
+
+    quote, totale_corrente, _ = calcola_quota_periodo(presenze, estrai_provenienza_macro, giorni_finestra, oggi)
+    if totale_corrente == 0:
+        return []
+
+    esiti_per_provenienza = {}
+    esiti_totali = {"soddisfatte": 0, "totali": 0}
+    for r in richieste_pit:
+        prov_macro = mappa_provenienza_macro(r.get("provenienza"))
+        if prov_macro not in esiti_per_provenienza:
+            esiti_per_provenienza[prov_macro] = {"soddisfatte": 0, "totali": 0}
+        esiti_per_provenienza[prov_macro]["totali"] += 1
+        esiti_totali["totali"] += 1
+        if r.get("esito") == "soddisfatta":
+            esiti_per_provenienza[prov_macro]["soddisfatte"] += 1
+            esiti_totali["soddisfatte"] += 1
+
+    if esiti_totali["totali"] == 0:
+        return []
+    media_generale_pct = round(esiti_totali["soddisfatte"] / esiti_totali["totali"] * 100, 1)
+
+    opportunita = []
+    for prov_macro, dati_quota in quote.items():
+        if dati_quota["quota_corrente"] < SOGLIA_PCT_PROVENIENZA_RILEVANTE:
+            continue
+        esiti = esiti_per_provenienza.get(prov_macro)
+        if not esiti or esiti["totali"] < SOGLIA_MIN_RICHIESTE_FORZA:
+            continue
+        pct_soddisfatta = round(esiti["soddisfatte"] / esiti["totali"] * 100, 1)
+        if pct_soddisfatta < media_generale_pct:
+            opportunita.append({
+                "quadrante": "opportunita",
+                "voce": f"Servizi per turisti \"{prov_macro}\"",
+                "dato_sottostante": (
+                    f"\"{prov_macro}\" rappresenta il {dati_quota['quota_corrente']}% delle presenze recenti "
+                    f"(ultimi {giorni_finestra} giorni), ma le richieste PIT di questa provenienza hanno un tasso "
+                    f"di esito soddisfatta del {pct_soddisfatta}% ({esiti['soddisfatte']}/{esiti['totali']}), "
+                    f"contro una media generale del {media_generale_pct}%."
+                ),
+                "valore_numerico": dati_quota["quota_corrente"],
+            })
+    opportunita.sort(key=lambda x: x["valore_numerico"], reverse=True)
+    return opportunita
+
+
+def genera_opportunita_minacce_fasce(presenze, giorni_finestra, oggi):
+    """Opportunità di tipo B (fasce in crescita) e minacce di tipo C
+    (fasce/provenienze in calo da posizione prima dominante), basate sul
+    confronto tra periodo corrente e precedente per ciascuna fascia d'età."""
+    if giorni_finestra is None:
+        return [], []
+
+    def estrai_fasce(r):
+        fasce_raw = (r.get("fasce") or "").split(", ")
+        return [normalizza_fascia(f) for f in fasce_raw if f]
+
+    quote, _, _ = calcola_quota_periodo(presenze, estrai_fasce, giorni_finestra, oggi)
+
+    opportunita = []
+    minacce = []
+    for fascia, dati_quota in quote.items():
+        if dati_quota["quota_precedente"] == 0:
+            continue
+        variazione_pct = round(
+            ((dati_quota["quota_corrente"] - dati_quota["quota_precedente"]) / dati_quota["quota_precedente"]) * 100, 1
+        ) if dati_quota["quota_precedente"] > 0 else None
+
+        if variazione_pct is None:
+            continue
+
+        if variazione_pct >= SOGLIA_PCT_CRESCITA_FASCIA:
+            opportunita.append({
+                "quadrante": "opportunita",
+                "voce": f"Fascia {fascia} anni in crescita",
+                "dato_sottostante": (
+                    f"La fascia {fascia} anni è passata dal {dati_quota['quota_precedente']}% al "
+                    f"{dati_quota['quota_corrente']}% delle presenze (variazione {variazione_pct}%) "
+                    f"tra i due periodi di {giorni_finestra} giorni confrontati."
+                ),
+                "valore_numerico": variazione_pct,
+            })
+        elif variazione_pct <= SOGLIA_PCT_CALO_FASCIA and dati_quota["quota_precedente"] >= SOGLIA_PCT_DOMINANZA_PRECEDENTE:
+            minacce.append({
+                "quadrante": "minaccia",
+                "voce": f"Calo fascia {fascia} anni, prima dominante",
+                "dato_sottostante": (
+                    f"La fascia {fascia} anni, che rappresentava il {dati_quota['quota_precedente']}% delle presenze "
+                    f"nel periodo precedente, è calata al {dati_quota['quota_corrente']}% (variazione {variazione_pct}%) "
+                    f"nei {giorni_finestra} giorni più recenti."
+                ),
+                "valore_numerico": abs(variazione_pct),
+            })
+
+    opportunita.sort(key=lambda x: x["valore_numerico"], reverse=True)
+    minacce.sort(key=lambda x: x["valore_numerico"], reverse=True)
+    return opportunita, minacce
+
+
+def genera_minaccia_benchmark(comune_id, piano_id):
+    """Minaccia di tipo B: crescita propria significativamente sotto il
+    benchmark regionale inserito, se disponibile e non datato. Riusa la
+    stessa logica già calcolata per la sezione benchmark, senza duplicarla."""
+    risultato_benchmark = get_benchmark_regionale(comune_id)
+    if "errore" in risultato_benchmark:
+        return None
+    if not risultato_benchmark.get("dati_sufficienti") or not risultato_benchmark.get("benchmark") or risultato_benchmark.get("benchmark_datato"):
+        return None
+
+    crescita_propria = risultato_benchmark["crescita_propria_pct"]
+    crescita_regionale = risultato_benchmark["benchmark"]["crescita_arrivi_pct"]
+    differenza = round(crescita_propria - crescita_regionale, 1)
+
+    if differenza >= 0:
+        return None
+
+    return {
+        "quadrante": "minaccia",
+        "voce": "Crescita sotto la media regionale",
+        "dato_sottostante": (
+            f"La destinazione cresce del {crescita_propria}% contro una media regionale del {crescita_regionale}% "
+            f"(fonte: {risultato_benchmark['benchmark']['fonte']}, anno {risultato_benchmark['benchmark']['anno_riferimento']}), "
+            f"una differenza di {differenza} punti percentuali."
+        ),
+        "valore_numerico": abs(differenza),
+    }
+
+
+@app.get("/swot-dinamica/{comune_id}")
+def get_swot_dinamica(comune_id: str):
+    """Genera la matrice SWOT a 4 quadranti incrociando dati PIT e presenze,
+    sempre con il dato grezzo sottostante esplicitato per ogni voce. Ogni
+    chiamata genera uno snapshot live; il salvataggio dello storico avviene
+    separatamente tramite l'endpoint di snapshot."""
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+
+        siti = ottieni_siti_comune(comune_id)
+        if not siti:
+            return {"errore": "Nessun sito culturale trovato per questo comune"}
+        sito_ids = [s["id"] for s in siti]
+
+        richieste_pit_resp = supabase.table("richieste_pit").select("*").eq("comune_id", comune_id).execute()
+        richieste_pit = richieste_pit_resp.data or []
+
+        presenze_resp = supabase.table("presenza").select("data, gruppo, fasce, provenienza").in_("sito_id", sito_ids).execute()
+        presenze = presenze_resp.data or []
+
+        oggi = datetime.now()
+        giorni_finestra = None
+        if presenze:
+            prima_data = min(pd.to_datetime(p["data"]) for p in presenze)
+            giorni_finestra, _ = calcola_finestra_adattiva(prima_data, oggi)
+
+        debolezze = genera_debolezze_da_pit(richieste_pit) if richieste_pit else []
+        forze_pit = genera_forze_da_pit(richieste_pit) if richieste_pit else []
+
+        opportunita_provenienza = genera_opportunita_provenienza(presenze, richieste_pit, giorni_finestra, oggi) if presenze and richieste_pit else []
+        opportunita_fasce, minacce_fasce = genera_opportunita_minacce_fasce(presenze, giorni_finestra, oggi) if presenze else ([], [])
+
+        minaccia_benchmark = genera_minaccia_benchmark(comune_id, piano["id"])
+
+        forze = forze_pit
+        opportunita = opportunita_provenienza + opportunita_fasce
+        minacce = minacce_fasce + ([minaccia_benchmark] if minaccia_benchmark else [])
+
+        avvisi = []
+        if not richieste_pit:
+            avvisi.append("Nessuna richiesta PIT registrata per questo comune: Forze e Debolezze non possono essere generate da questa fonte.")
+        if not presenze:
+            avvisi.append("Nessun dato di presenze disponibile: Opportunità e Minacce basate sui trend non possono essere generate.")
+        if not forze and not debolezze and not opportunita and not minacce:
+            avvisi.append("Nessuna voce SWOT generata: i dati raccolti finora non superano le soglie minime di significatività. La matrice si popolerà automaticamente man mano che i dati cresceranno.")
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "generato_il": oggi.isoformat(),
+            "forze": forze,
+            "debolezze": debolezze,
+            "opportunita": opportunita,
+            "minacce": minacce,
+            "avvisi": avvisi,
+            "nota_metodologica": (
+                "La matrice SWOT è generata automaticamente incrociando le richieste e i disservizi segnalati al "
+                "Punto Informativo Turistico con i dati reali di presenze. Ogni voce riporta sempre il dato grezzo "
+                "che la sostiene. Soglie applicate: una categoria di disservizio diventa debolezza solo sopra il "
+                f"{SOGLIA_PCT_DEBOLEZZA}% dei disservizi totali (minimo {SOGLIA_MIN_SEGNALAZIONI_DEBOLEZZA} segnalazioni); "
+                f"una categoria di richiesta diventa forza solo sopra il {SOGLIA_PCT_FORZA}% di esito soddisfatta "
+                f"(minimo {SOGLIA_MIN_RICHIESTE_FORZA} richieste)."
+            )
+        }
+    except Exception as e:
+        print(f"Errore SWOT dinamica comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/swot-dinamica/{comune_id}/salva-snapshot")
+def salva_snapshot_swot(comune_id: str):
+    """Salva uno snapshot permanente della SWOT corrente in swot_storico,
+    permettendo di confrontare nel tempo come evolve l'analisi."""
+    try:
+        swot = get_swot_dinamica(comune_id)
+        if "errore" in swot:
+            return swot
+
+        righe_da_salvare = []
+        for quadrante_lista in [swot["forze"], swot["debolezze"], swot["opportunita"], swot["minacce"]]:
+            for voce in quadrante_lista:
+                righe_da_salvare.append({
+                    "piano_id": swot["piano_id"],
+                    "comune_id": comune_id,
+                    "quadrante": voce["quadrante"],
+                    "voce": voce["voce"],
+                    "dato_sottostante": voce["dato_sottostante"],
+                    "valore_numerico": voce["valore_numerico"],
+                })
+
+        if not righe_da_salvare:
+            return {"status": "nessuna voce da salvare", "n_voci": 0}
+
+        supabase.table("swot_storico").insert(righe_da_salvare).execute()
+        return {"status": "salvato", "n_voci": len(righe_da_salvare)}
+    except Exception as e:
+        print(f"Errore salvataggio snapshot SWOT comune {comune_id}: {e}")
+        return {"errore": str(e)}
