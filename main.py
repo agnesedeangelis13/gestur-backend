@@ -2258,7 +2258,10 @@ def salva_snapshot_swot_tutti():
 def get_trend_domanda(comune_id: str):
     """Aggrega le presenze reali degli ultimi 12 mesi per mese e per sito,
     per mostrare l'andamento della domanda turistica nel comune e il
-    contributo di ciascun sito culturale al totale."""
+    contributo di ciascun sito culturale al totale. Per ciascun mese calcola
+    anche la provenienza macro e la fascia d'età dominanti, con la relativa
+    quota percentuale: un dato utile per orientare iniziative di marketing
+    mirate, oltre al solo volume di presenze."""
     try:
         siti = ottieni_siti_comune(comune_id)
         if not siti:
@@ -2269,7 +2272,7 @@ def get_trend_domanda(comune_id: str):
         oggi = datetime.now()
         dodici_mesi_fa = oggi - timedelta(days=365)
 
-        presenze_resp = supabase.table("presenza").select("sito_id, data, gruppo") \
+        presenze_resp = supabase.table("presenza").select("sito_id, data, gruppo, provenienza, fasce") \
             .in_("sito_id", sito_ids).gte("data", dodici_mesi_fa.strftime("%Y-%m-%d")).execute()
         presenze = presenze_resp.data or []
 
@@ -2280,18 +2283,45 @@ def get_trend_domanda(comune_id: str):
         df["data"] = pd.to_datetime(df["data"])
         df["mese"] = df["data"].dt.strftime("%Y-%m")
 
-        aggregato = df.groupby(["mese", "sito_id"])["gruppo"].sum().reset_index()
+        aggregato_sito = df.groupby(["mese", "sito_id"])["gruppo"].sum().reset_index()
 
-        mesi_ordinati = sorted(aggregato["mese"].unique())
+        mesi_ordinati = sorted(df["mese"].unique())
         serie_per_mese = []
         for mese in mesi_ordinati:
-            righe_mese = aggregato[aggregato["mese"] == mese]
-            per_sito = {nomi_siti.get(int(r["sito_id"]), f"Sito {r['sito_id']}"): int(r["gruppo"]) for _, r in righe_mese.iterrows()}
+            righe_sito_mese = aggregato_sito[aggregato_sito["mese"] == mese]
+            per_sito = {nomi_siti.get(int(r["sito_id"]), f"Sito {r['sito_id']}"): int(r["gruppo"]) for _, r in righe_sito_mese.iterrows()}
             totale_mese = sum(per_sito.values())
+
+            righe_mese = df[df["mese"] == mese]
+            conteggio_prov = {}
+            conteggio_fascia = {}
+            for _, r in righe_mese.iterrows():
+                gruppo = r.get("gruppo", 0) or 0
+                prov_macro = mappa_provenienza_macro(r.get("provenienza"))
+                conteggio_prov[prov_macro] = conteggio_prov.get(prov_macro, 0) + gruppo
+
+                fasce_riga = [normalizza_fascia(f) for f in (r.get("fasce") or "").split(", ") if f]
+                if fasce_riga:
+                    quota_fascia = gruppo / len(fasce_riga)
+                    for f in fasce_riga:
+                        conteggio_fascia[f] = conteggio_fascia.get(f, 0) + quota_fascia
+
+            provenienza_dominante = None
+            if conteggio_prov and totale_mese > 0:
+                prov_top = max(conteggio_prov.items(), key=lambda x: x[1])
+                provenienza_dominante = {"valore": prov_top[0], "quota_pct": round(prov_top[1] / totale_mese * 100, 1)}
+
+            fascia_dominante = None
+            if conteggio_fascia and totale_mese > 0:
+                fascia_top = max(conteggio_fascia.items(), key=lambda x: x[1])
+                fascia_dominante = {"valore": fascia_top[0], "quota_pct": round(fascia_top[1] / totale_mese * 100, 1)}
+
             serie_per_mese.append({
                 "mese": mese,
                 "totale": totale_mese,
                 "per_sito": per_sito,
+                "provenienza_dominante": provenienza_dominante,
+                "fascia_dominante": fascia_dominante,
             })
 
         totale_periodo = sum(m["totale"] for m in serie_per_mese)
