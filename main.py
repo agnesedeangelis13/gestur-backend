@@ -2250,3 +2250,59 @@ def salva_snapshot_swot_tutti():
     except Exception as e:
         print(f"Errore snapshot SWOT tutti i comuni: {e}")
         return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO — TREND DOMANDA TURISTICA
+# ============================================================
+
+@app.get("/trend-domanda/{comune_id}")
+def get_trend_domanda(comune_id: str):
+    """Aggrega le presenze reali degli ultimi 12 mesi per mese e per sito,
+    per mostrare l'andamento della domanda turistica nel comune e il
+    contributo di ciascun sito culturale al totale."""
+    try:
+        siti = ottieni_siti_comune(comune_id)
+        if not siti:
+            return {"errore": "Nessun sito culturale trovato per questo comune"}
+        sito_ids = [s["id"] for s in siti]
+        nomi_siti = {s["id"]: s["nome_sito"] for s in siti}
+
+        oggi = datetime.now()
+        dodici_mesi_fa = oggi - timedelta(days=365)
+
+        presenze_resp = supabase.table("presenza").select("sito_id, data, gruppo") \
+            .in_("sito_id", sito_ids).gte("data", dodici_mesi_fa.strftime("%Y-%m-%d")).execute()
+        presenze = presenze_resp.data or []
+
+        if not presenze:
+            return {"errore": "Nessun dato di presenze disponibile negli ultimi 12 mesi per questo comune"}
+
+        df = pd.DataFrame(presenze)
+        df["data"] = pd.to_datetime(df["data"])
+        df["mese"] = df["data"].dt.strftime("%Y-%m")
+
+        aggregato = df.groupby(["mese", "sito_id"])["gruppo"].sum().reset_index()
+
+        mesi_ordinati = sorted(aggregato["mese"].unique())
+        serie_per_mese = []
+        for mese in mesi_ordinati:
+            righe_mese = aggregato[aggregato["mese"] == mese]
+            per_sito = {nomi_siti.get(int(r["sito_id"]), f"Sito {r['sito_id']}"): int(r["gruppo"]) for _, r in righe_mese.iterrows()}
+            totale_mese = sum(per_sito.values())
+            serie_per_mese.append({
+                "mese": mese,
+                "totale": totale_mese,
+                "per_sito": per_sito,
+            })
+
+        totale_periodo = sum(m["totale"] for m in serie_per_mese)
+
+        return {
+            "comune_id": comune_id,
+            "mesi_inclusi": len(serie_per_mese),
+            "totale_periodo": totale_periodo,
+            "siti_inclusi": list(nomi_siti.values()),
+            "serie_mensile": serie_per_mese,
+        }
+    except Exception as e:
+        print(f"Errore trend domanda comune {comune_id}: {e}")
+        return {"errore": str(e)}
