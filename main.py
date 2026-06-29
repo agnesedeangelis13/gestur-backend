@@ -2336,3 +2336,105 @@ def get_trend_domanda(comune_id: str):
     except Exception as e:
         print(f"Errore trend domanda comune {comune_id}: {e}")
         return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO — INDICATORI STANDARD
+# ============================================================
+
+SOGLIA_MESI_MIN_STAGIONALITA = 6
+
+
+def livello_stagionalita(coefficiente_variazione):
+    """Classifica il coefficiente di variazione mensile in una fascia
+    leggibile: sotto il 20% il flusso è considerato regolare, sopra il 60%
+    fortemente concentrato in pochi mesi dell'anno."""
+    if coefficiente_variazione < 20:
+        return "bassa"
+    elif coefficiente_variazione < 40:
+        return "media"
+    elif coefficiente_variazione < 60:
+        return "alta"
+    else:
+        return "molto alta"
+
+
+@app.get("/indicatori-standard/{comune_id}")
+def get_indicatori_standard(comune_id: str):
+    """Calcola due indicatori standard sulla domanda turistica del comune:
+    il tasso di stagionalità (quanto le presenze sono concentrate in pochi
+    mesi dell'anno, misurato come coefficiente di variazione mensile) e
+    l'indice di internazionalizzazione (quota di presenze con provenienza
+    estera sul totale). Entrambi calcolati sui dati reali disponibili, con
+    soglie minime dichiarate per evitare numeri statisticamente fragili."""
+    try:
+        siti = ottieni_siti_comune(comune_id)
+        if not siti:
+            return {"errore": "Nessun sito culturale trovato per questo comune"}
+        sito_ids = [s["id"] for s in siti]
+
+        presenze_resp = supabase.table("presenza").select("data, gruppo, provenienza").in_("sito_id", sito_ids).execute()
+        presenze = presenze_resp.data or []
+
+        if not presenze:
+            return {"errore": "Nessun dato di presenze disponibile per questo comune"}
+
+        df = pd.DataFrame(presenze)
+        df["data"] = pd.to_datetime(df["data"])
+        df["mese"] = df["data"].dt.strftime("%Y-%m")
+
+        # ---- Tasso di stagionalità ----
+        totali_mensili = df.groupby("mese")["gruppo"].sum()
+        n_mesi = len(totali_mensili)
+
+        stagionalita = {
+            "n_mesi_disponibili": n_mesi,
+            "dati_sufficienti": n_mesi >= SOGLIA_MESI_MIN_STAGIONALITA,
+        }
+        if n_mesi >= SOGLIA_MESI_MIN_STAGIONALITA:
+            media_mensile = float(totali_mensili.mean())
+            std_mensile = float(totali_mensili.std(ddof=0))
+            coefficiente_variazione = round(std_mensile / media_mensile * 100, 1) if media_mensile > 0 else 0
+            mese_massimo = totali_mensili.idxmax()
+            mese_minimo = totali_mensili.idxmin()
+            stagionalita.update({
+                "coefficiente_variazione_pct": coefficiente_variazione,
+                "livello": livello_stagionalita(coefficiente_variazione),
+                "media_mensile": round(media_mensile, 1),
+                "mese_massimo": {"mese": mese_massimo, "valore": int(totali_mensili[mese_massimo])},
+                "mese_minimo": {"mese": mese_minimo, "valore": int(totali_mensili[mese_minimo])},
+                "dato_sottostante": (
+                    f"Su {n_mesi} mesi osservati, le presenze mensili variano da un minimo di "
+                    f"{int(totali_mensili[mese_minimo])} ({mese_minimo}) a un massimo di {int(totali_mensili[mese_massimo])} "
+                    f"({mese_massimo}), con una media di {round(media_mensile, 1)} al mese."
+                ),
+            })
+
+        # ---- Indice di internazionalizzazione ----
+        totale_presenze = int(df["gruppo"].sum())
+        df["provenienza_macro"] = df["provenienza"].apply(mappa_provenienza_macro)
+        presenze_estere = int(df[~df["provenienza_macro"].isin(["Italia", "Locale"])]["gruppo"].sum())
+        presenze_locali_italiane = totale_presenze - presenze_estere
+
+        internazionalizzazione = {
+            "dati_sufficienti": totale_presenze > 0,
+        }
+        if totale_presenze > 0:
+            quota_estera_pct = round(presenze_estere / totale_presenze * 100, 1)
+            internazionalizzazione.update({
+                "quota_estera_pct": quota_estera_pct,
+                "presenze_estere": presenze_estere,
+                "presenze_italiane_locali": presenze_locali_italiane,
+                "totale_presenze": totale_presenze,
+                "dato_sottostante": (
+                    f"{presenze_estere} presenze con provenienza estera su {totale_presenze} totali "
+                    f"({quota_estera_pct}%); le restanti {presenze_locali_italiane} sono italiane o residenti locali."
+                ),
+            })
+
+        return {
+            "comune_id": comune_id,
+            "stagionalita": stagionalita,
+            "internazionalizzazione": internazionalizzazione,
+        }
+    except Exception as e:
+        print(f"Errore indicatori standard comune {comune_id}: {e}")
+        return {"errore": str(e)}
