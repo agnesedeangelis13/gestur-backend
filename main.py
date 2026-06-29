@@ -2438,3 +2438,65 @@ def get_indicatori_standard(comune_id: str):
     except Exception as e:
         print(f"Errore indicatori standard comune {comune_id}: {e}")
         return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO — ANALISI COMPETITOR
+# ============================================================
+
+@app.get("/analisi-competitor/{comune_id}")
+def get_analisi_competitor(comune_id: str):
+    """Recupera lo storico delle osservazioni qualitative inserite dal
+    comune sullo scenario competitivo esterno (es. iniziative di comuni
+    limitrofi), dalla più recente alla più vecchia."""
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+
+        osservazioni_resp = supabase.table("analisi_competitor").select("*") \
+            .eq("piano_id", piano["id"]).order("inserito_il", desc=True).execute()
+        osservazioni = osservazioni_resp.data or []
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "osservazioni": osservazioni,
+        }
+    except Exception as e:
+        print(f"Errore analisi competitor comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/analisi-competitor")
+def crea_osservazione_competitor(payload: dict):
+    """Aggiunge una nuova osservazione qualitativa al diario competitor,
+    senza sovrascrivere le precedenti, per costruire uno storico nel tempo."""
+    try:
+        comune_id_str = payload.get("comune_id")
+        testo = payload.get("testo")
+
+        if not comune_id_str or not testo or not testo.strip():
+            return {"errore": "comune_id e testo sono obbligatori"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        record = {
+            "piano_id": piano["id"],
+            "comune_id": comune_id_str,
+            "testo": testo.strip(),
+        }
+        creato_resp = supabase.table("analisi_competitor").insert(record).execute()
+
+        return {"status": "salvato", "osservazione": creato_resp.data[0] if creato_resp.data else None}
+    except Exception as e:
+        print(f"Errore creazione osservazione competitor: {e}")
+        return {"errore": str(e)}
+
+
+@app.delete("/analisi-competitor/{osservazione_id}")
+def elimina_osservazione_competitor(osservazione_id: int):
+    """Elimina una singola osservazione dal diario, per correggere
+    eventuali errori di inserimento senza dover ricreare tutto lo storico."""
+    try:
+        supabase.table("analisi_competitor").delete().eq("id", osservazione_id).execute()
+        return {"status": "eliminato"}
+    except Exception as e:
+        print(f"Errore eliminazione osservazione competitor {osservazione_id}: {e}")
+        return {"errore": str(e)}
