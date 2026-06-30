@@ -2500,3 +2500,298 @@ def elimina_osservazione_competitor(osservazione_id: int):
     except Exception as e:
         print(f"Errore eliminazione osservazione competitor {osservazione_id}: {e}")
         return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO — SEZIONE 2: VISIONI E CICLO DI VITA
+# ============================================================
+
+SOGLIA_GIORNI_MIN_FASE_LATO = 15  # ogni finestra (su 3 consecutive) deve avere almeno questi giorni
+SOGLIA_CRESCITA_ALTA_PCT = 15.0
+SOGLIA_CRESCITA_NEGATIVA_PCT = -5.0
+
+FASI_BUTLER = [
+    {
+        "chiave": "esplorazione_coinvolgimento",
+        "nome": "Esplorazione / Coinvolgimento",
+        "descrizione": "La destinazione è in una fase iniziale di crescita rapida e in accelerazione: il pubblico cresce più velocemente nel periodo più recente rispetto al precedente.",
+    },
+    {
+        "chiave": "sviluppo",
+        "nome": "Sviluppo",
+        "descrizione": "La destinazione cresce in modo sostenuto, ma il ritmo di crescita non sta più accelerando: è una fase di consolidamento della domanda raggiunta.",
+    },
+    {
+        "chiave": "consolidamento",
+        "nome": "Consolidamento",
+        "descrizione": "Le presenze si sono stabilizzate, con una crescita moderata o prossima allo zero: la destinazione ha raggiunto un equilibrio nella domanda.",
+    },
+    {
+        "chiave": "declino",
+        "nome": "Declino",
+        "descrizione": "Le presenze sono in calo nel periodo più recente: può essere il segnale di una fase di stanchezza della destinazione, da affrontare con nuove iniziative di rilancio.",
+    },
+]
+
+
+def calcola_finestra_ciclo_vita(prima_data, oggi):
+    """Calcola la dimensione di una finestra di confronto, su 3 finestre
+    consecutive, in base allo storico realmente disponibile. Sotto la soglia
+    minima per lato, restituisce None: con meno di 3 finestre minime di dati
+    non è statisticamente onesto provare a determinare una fase del ciclo
+    di vita."""
+    giorni_totali = (oggi - prima_data).days
+    giorni_finestra = giorni_totali // 3
+    if giorni_finestra < SOGLIA_GIORNI_MIN_FASE_LATO:
+        return None
+    return min(giorni_finestra, 365)
+
+
+def classifica_fase_butler(crescita_recente_pct, in_accelerazione):
+    """Applica la matrice di classificazione: livello di crescita recente
+    incrociato con la direzione (accelerazione vs decelerazione/stabile)."""
+    if crescita_recente_pct < SOGLIA_CRESCITA_NEGATIVA_PCT:
+        return "declino"
+    if crescita_recente_pct >= SOGLIA_CRESCITA_ALTA_PCT:
+        return "esplorazione_coinvolgimento" if in_accelerazione else "sviluppo"
+    return "sviluppo" if in_accelerazione else "consolidamento"
+
+
+@app.get("/ciclo-vita-destinazione/{comune_id}")
+def get_ciclo_vita_destinazione(comune_id: str):
+    """Posiziona la destinazione su una fase semplificata del modello del
+    ciclo di vita turistico di Butler, basandosi esclusivamente sul tasso di
+    crescita reale delle presenze su 3 finestre temporali consecutive
+    (accelerazione, decelerazione, o declino). Richiede uno storico minimo
+    per essere statisticamente onesto: sotto soglia, segnala chiaramente
+    che la fase non può ancora essere determinata."""
+    try:
+        siti = ottieni_siti_comune(comune_id)
+        if not siti:
+            return {"errore": "Nessun sito culturale trovato per questo comune"}
+        sito_ids = [s["id"] for s in siti]
+
+        presenze_resp = supabase.table("presenza").select("data, gruppo").in_("sito_id", sito_ids).execute()
+        presenze = presenze_resp.data or []
+
+        if not presenze:
+            return {"errore": "Nessun dato di presenze disponibile per questo comune"}
+
+        oggi = datetime.now()
+        prima_data = min(pd.to_datetime(p["data"]) for p in presenze)
+        giorni_finestra = calcola_finestra_ciclo_vita(prima_data, oggi)
+
+        if giorni_finestra is None:
+            giorni_totali = (oggi - prima_data).days
+            return {
+                "comune_id": comune_id,
+                "dati_sufficienti": False,
+                "giorni_storico_disponibili": giorni_totali,
+                "giorni_minimi_richiesti": SOGLIA_GIORNI_MIN_FASE_LATO * 3,
+                "fasi_framework": FASI_BUTLER,
+                "messaggio": (
+                    f"Servono almeno {SOGLIA_GIORNI_MIN_FASE_LATO * 3} giorni di storico presenze per posizionare "
+                    f"la destinazione sul ciclo di vita in modo statisticamente affidabile. Attualmente disponibili: "
+                    f"{giorni_totali} giorni. Il posizionamento sarà calcolato automaticamente non appena lo storico "
+                    f"sarà sufficiente."
+                ),
+            }
+
+        confine_1 = oggi - timedelta(days=giorni_finestra)
+        confine_2 = oggi - timedelta(days=giorni_finestra * 2)
+        confine_3 = oggi - timedelta(days=giorni_finestra * 3)
+
+        totale_p1 = 0  # più vecchio
+        totale_p2 = 0
+        totale_p3 = 0  # più recente
+        for p in presenze:
+            data_p = pd.to_datetime(p["data"])
+            gruppo = p.get("gruppo", 0) or 0
+            if data_p >= pd.Timestamp(confine_1):
+                totale_p3 += gruppo
+            elif data_p >= pd.Timestamp(confine_2):
+                totale_p2 += gruppo
+            elif data_p >= pd.Timestamp(confine_3):
+                totale_p1 += gruppo
+
+        crescita_1 = round((totale_p2 - totale_p1) / totale_p1 * 100, 1) if totale_p1 > 0 else None
+        crescita_2 = round((totale_p3 - totale_p2) / totale_p2 * 100, 1) if totale_p2 > 0 else None
+
+        if crescita_1 is None or crescita_2 is None:
+            return {
+                "comune_id": comune_id,
+                "dati_sufficienti": False,
+                "giorni_storico_disponibili": (oggi - prima_data).days,
+                "giorni_minimi_richiesti": SOGLIA_GIORNI_MIN_FASE_LATO * 3,
+                "fasi_framework": FASI_BUTLER,
+                "messaggio": "Uno dei periodi confrontati non ha presenze sufficienti per calcolare una crescita significativa.",
+            }
+
+        in_accelerazione = crescita_2 > crescita_1
+        fase_chiave = classifica_fase_butler(crescita_2, in_accelerazione)
+        fase_dettaglio = next(f for f in FASI_BUTLER if f["chiave"] == fase_chiave)
+
+        return {
+            "comune_id": comune_id,
+            "dati_sufficienti": True,
+            "giorni_finestra": giorni_finestra,
+            "fase_attuale": fase_dettaglio,
+            "crescita_periodo_precedente_pct": crescita_1,
+            "crescita_periodo_recente_pct": crescita_2,
+            "in_accelerazione": in_accelerazione,
+            "dato_sottostante": (
+                f"Confronto su 3 periodi di {giorni_finestra} giorni ciascuno: {totale_p1} presenze nel periodo più "
+                f"lontano, {totale_p2} nel periodo intermedio ({crescita_1}% rispetto al precedente), {totale_p3} "
+                f"nel periodo più recente ({crescita_2}% rispetto al precedente). Il tasso di crescita risulta "
+                f"{'in accelerazione' if in_accelerazione else 'in decelerazione o stabile'}."
+            ),
+            "fasi_framework": FASI_BUTLER,
+        }
+    except Exception as e:
+        print(f"Errore ciclo di vita destinazione comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/dimensione-economica/{comune_id}")
+def get_dimensione_economica(comune_id: str):
+    """Calcola il valore economico storico reale generato per il territorio
+    negli ultimi 12 mesi (o quanto disponibile), riusando la stessa logica
+    di composizione del pubblico e coefficienti di spesa già impiegata in
+    previsioni_economiche, applicata però a presenze realmente avvenute
+    invece che a previsioni future."""
+    try:
+        siti = ottieni_siti_comune(comune_id)
+        if not siti:
+            return {"errore": "Nessun sito culturale trovato per questo comune"}
+        sito_ids = [s["id"] for s in siti]
+
+        oggi = datetime.now()
+        dodici_mesi_fa = oggi - timedelta(days=365)
+
+        valore_totale_biglietti = 0
+        valore_totale_commerciale = 0
+        n_siti_con_dati = 0
+
+        for sito_id in sito_ids:
+            tariffe_resp = supabase.table("siti_culturali").select(
+                "nome_sito, prezzo_biglietto, prezzo_ridotto, percentuale_ridotti, "
+                "percentuale_bookshop, spesa_media_bookshop, "
+                "percentuale_ristorazione, spesa_media_ristorazione"
+            ).eq("id", sito_id).single().execute()
+            tariffe = tariffe_resp.data
+            if not tariffe or tariffe.get("prezzo_biglietto") is None:
+                continue
+
+            coeff_resp = supabase.table("coefficienti_spesa").select("*").eq("sito_id", sito_id).execute()
+            coefficienti = {(c["fascia"], c["provenienza_macro"], c["tipo_visitatore"]): c["coefficiente"] for c in coeff_resp.data}
+
+            storico_resp = supabase.table("presenza").select("data, gruppo, fasce, provenienza, tipo_visitatore") \
+                .eq("sito_id", sito_id).gte("data", dodici_mesi_fa.strftime("%Y-%m-%d")).execute()
+            storico = storico_resp.data
+            if not storico:
+                continue
+
+            n_siti_con_dati += 1
+            prezzo_medio = tariffe["prezzo_biglietto"] * (1 - tariffe["percentuale_ridotti"] / 100) + tariffe["prezzo_ridotto"] * (tariffe["percentuale_ridotti"] / 100)
+            bookshop_base = (tariffe["percentuale_bookshop"] / 100) * tariffe["spesa_media_bookshop"]
+            ristorazione_base = (tariffe["percentuale_ristorazione"] / 100) * tariffe["spesa_media_ristorazione"]
+
+            for r in storico:
+                fasce = [normalizza_fascia(f) for f in (r.get("fasce") or "").split(", ") if f]
+                if not fasce:
+                    continue
+                n_persone = r.get("gruppo", 0) or 0
+                tipo = r.get("tipo_visitatore") or "gruppo"
+                prov_macro = mappa_provenienza_macro(r.get("provenienza"))
+                per_fascia = n_persone / len(fasce)
+
+                for f in fasce:
+                    coeff = coefficienti.get((f, prov_macro, tipo), 1.0)
+                    valore_totale_biglietti += per_fascia * prezzo_medio
+                    valore_totale_commerciale += per_fascia * (bookshop_base + ristorazione_base) * coeff
+
+        if n_siti_con_dati == 0:
+            return {"errore": "Nessun sito con tariffe configurate e dati storici sufficienti per calcolare il valore economico"}
+
+        valore_totale = round(valore_totale_biglietti + valore_totale_commerciale, 2)
+
+        return {
+            "comune_id": comune_id,
+            "periodo_giorni": 365,
+            "siti_inclusi": n_siti_con_dati,
+            "valore_biglietti": round(valore_totale_biglietti, 2),
+            "valore_commerciale": round(valore_totale_commerciale, 2),
+            "valore_totale_generato": valore_totale,
+            "dato_sottostante": (
+                f"Valore stimato sugli ultimi 12 mesi su {n_siti_con_dati} sito/i: €{round(valore_totale_biglietti, 0):.0f} "
+                f"da biglietteria, €{round(valore_totale_commerciale, 0):.0f} da bookshop e ristorazione collegati alla visita, "
+                f"per un totale di €{valore_totale:.0f}."
+            ),
+            "nota_metodologica": (
+                "Il valore è stimato applicando alle presenze reali registrate le stesse tariffe e gli stessi "
+                "coefficienti di spesa per fascia/provenienza/tipo visitatore già usati nelle previsioni economiche "
+                "del sito: è una stima retrospettiva, non un dato di cassa effettivo."
+            ),
+        }
+    except Exception as e:
+        print(f"Errore dimensione economica comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/dimensione-sociale/{comune_id}")
+def get_dimensione_sociale(comune_id: str):
+    """Calcola la distribuzione del sentiment estratto dalle richieste PIT
+    del comune, considerando solo le richieste già classificate (la
+    classificazione resta on-demand, per non generare costi di chiamate AI
+    non richieste), segnalando sempre quante richieste non hanno ancora
+    un sentiment assegnato."""
+    try:
+        richieste_resp = supabase.table("richieste_pit").select("sentiment").eq("comune_id", comune_id).execute()
+        richieste = richieste_resp.data or []
+
+        if not richieste:
+            return {"errore": "Nessuna richiesta PIT registrata per questo comune"}
+
+        totale_richieste = len(richieste)
+        conteggio = {"positivo": 0, "neutro": 0, "negativo": 0}
+        non_classificate = 0
+        for r in richieste:
+            s = r.get("sentiment")
+            if s in conteggio:
+                conteggio[s] += 1
+            else:
+                non_classificate += 1
+
+        totale_classificate = totale_richieste - non_classificate
+
+        if totale_classificate == 0:
+            return {
+                "comune_id": comune_id,
+                "dati_sufficienti": False,
+                "totale_richieste": totale_richieste,
+                "totale_classificate": 0,
+                "messaggio": (
+                    "Nessuna delle richieste PIT registrate ha ancora un sentiment classificato. La classificazione "
+                    "avviene quando l'operatore la richiede esplicitamente per una richiesta con commento."
+                ),
+            }
+
+        distribuzione = {
+            k: {"conteggio": v, "quota_pct": round(v / totale_classificate * 100, 1)}
+            for k, v in conteggio.items()
+        }
+
+        return {
+            "comune_id": comune_id,
+            "dati_sufficienti": True,
+            "totale_richieste": totale_richieste,
+            "totale_classificate": totale_classificate,
+            "non_classificate": non_classificate,
+            "distribuzione": distribuzione,
+            "dato_sottostante": (
+                f"Su {totale_richieste} richieste PIT totali, {totale_classificate} hanno un sentiment classificato "
+                f"({conteggio['positivo']} positivo, {conteggio['neutro']} neutro, {conteggio['negativo']} negativo); "
+                f"{non_classificate} richieste non sono ancora state classificate."
+            ),
+        }
+    except Exception as e:
+        print(f"Errore dimensione sociale comune {comune_id}: {e}")
+        return {"errore": str(e)}
