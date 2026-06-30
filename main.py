@@ -2977,3 +2977,448 @@ def salva_snapshot_indicatori_tutti():
     except Exception as e:
         print(f"Errore snapshot indicatori tutti i comuni: {e}")
         return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO — SEZIONE 3: OBIETTIVI (Pilastro Sostenibilità)
+# ============================================================
+
+SOGLIA_CONCENTRAZIONE_BASSA = 30.0
+SOGLIA_CONCENTRAZIONE_MODERATA = 80.0
+SOGLIA_CONCENTRAZIONE_ALTA = 150.0
+
+
+def livello_concentrazione_weekend(indice_pct):
+    """Classifica l'indice di concentrazione weekend in una fascia di
+    rischio di overtourism, confrontando la media di affluenza nei weekend
+    con quella nei giorni feriali sullo stesso periodo."""
+    if indice_pct < SOGLIA_CONCENTRAZIONE_BASSA:
+        return "basso"
+    elif indice_pct < SOGLIA_CONCENTRAZIONE_MODERATA:
+        return "moderato"
+    elif indice_pct < SOGLIA_CONCENTRAZIONE_ALTA:
+        return "alto"
+    else:
+        return "critico"
+
+
+@app.get("/sostenibilita-carico/{comune_id}")
+def get_sostenibilita_carico(comune_id: str):
+    """Calcola l'indice di concentrazione weekend (sovraffollamento) sugli
+    ultimi 90 giorni di presenze reali, confrontando la media weekend con
+    la media dei giorni feriali, per intercettare segnali di overtourism
+    prima che diventi un problema strutturale."""
+    try:
+        siti = ottieni_siti_comune(comune_id)
+        if not siti:
+            return {"errore": "Nessun sito culturale trovato per questo comune"}
+        sito_ids = [s["id"] for s in siti]
+
+        novanta_giorni_fa = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        presenze_resp = supabase.table("presenza").select("data, gruppo") \
+            .in_("sito_id", sito_ids).gte("data", novanta_giorni_fa).execute()
+        presenze = presenze_resp.data or []
+
+        if not presenze:
+            return {"errore": "Nessun dato di presenze disponibile negli ultimi 90 giorni per questo comune"}
+
+        df = pd.DataFrame(presenze)
+        df["data"] = pd.to_datetime(df["data"])
+        aggregato_giorno = df.groupby("data")["gruppo"].sum().reset_index()
+        aggregato_giorno["is_weekend"] = aggregato_giorno["data"].dt.weekday >= 5
+
+        giorni_weekend = aggregato_giorno[aggregato_giorno["is_weekend"]]
+        giorni_feriali = aggregato_giorno[~aggregato_giorno["is_weekend"]]
+
+        if len(giorni_weekend) == 0 or len(giorni_feriali) == 0:
+            return {"errore": "Servono sia giorni feriali che giorni di weekend nello storico per calcolare questo indice"}
+
+        media_weekend = float(giorni_weekend["gruppo"].mean())
+        media_feriale = float(giorni_feriali["gruppo"].mean())
+
+        if media_feriale == 0:
+            return {"errore": "Media feriale pari a zero: impossibile calcolare un confronto significativo"}
+
+        indice_concentrazione_pct = round((media_weekend / media_feriale - 1) * 100, 1)
+        livello = livello_concentrazione_weekend(indice_concentrazione_pct)
+
+        return {
+            "comune_id": comune_id,
+            "periodo_giorni": 90,
+            "media_weekend": round(media_weekend, 1),
+            "media_feriale": round(media_feriale, 1),
+            "indice_concentrazione_pct": indice_concentrazione_pct,
+            "livello": livello,
+            "n_weekend_osservati": len(giorni_weekend),
+            "n_feriali_osservati": len(giorni_feriali),
+            "dato_sottostante": (
+                f"Negli ultimi 90 giorni, la media di affluenza nei weekend ({round(media_weekend, 1)} presenze/giorno, "
+                f"su {len(giorni_weekend)} giorni osservati) è del {indice_concentrazione_pct}% rispetto alla media "
+                f"dei giorni feriali ({round(media_feriale, 1)} presenze/giorno, su {len(giorni_feriali)} giorni osservati)."
+            ),
+        }
+    except Exception as e:
+        print(f"Errore sostenibilità carico comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+# ============================================================
+# PIANO STRATEGICO — SEZIONE 3: OBIETTIVI (Pilastro Accessibilità)
+# ============================================================
+
+@app.get("/accessibilita-pilastro/{comune_id}")
+def get_accessibilita_pilastro(comune_id: str):
+    """Calcola la percentuale di segnalazioni di disservizio relative
+    all'accessibilità sul totale dei disservizi PIT registrati, con il
+    trend mensile per vedere se la situazione sta migliorando o peggiorando."""
+    try:
+        richieste_resp = supabase.table("richieste_pit").select("data, categorie_disservizio").eq("comune_id", comune_id).execute()
+        richieste = richieste_resp.data or []
+
+        disservizi = [r for r in richieste if r.get("categorie_disservizio") and r["categorie_disservizio"].lower() != "altro"]
+        totale_disservizi = len(disservizi)
+
+        if totale_disservizi == 0:
+            return {"errore": "Nessuna segnalazione di disservizio registrata per questo comune"}
+
+        segnalazioni_accessibilita = [d for d in disservizi if d["categorie_disservizio"] == "Accessibilità"]
+        n_accessibilita = len(segnalazioni_accessibilita)
+        quota_pct = round(n_accessibilita / totale_disservizi * 100, 1)
+
+        df = pd.DataFrame(disservizi)
+        df["data"] = pd.to_datetime(df["data"])
+        df["mese"] = df["data"].dt.strftime("%Y-%m")
+        df["e_accessibilita"] = df["categorie_disservizio"] == "Accessibilità"
+
+        trend_mensile_raw = df.groupby("mese").agg(
+            totale=("e_accessibilita", "count"),
+            accessibilita=("e_accessibilita", "sum")
+        ).reset_index()
+        trend_mensile = [
+            {
+                "mese": r["mese"],
+                "n_accessibilita": int(r["accessibilita"]),
+                "totale_disservizi": int(r["totale"]),
+                "quota_pct": round(r["accessibilita"] / r["totale"] * 100, 1) if r["totale"] > 0 else 0,
+            }
+            for _, r in trend_mensile_raw.iterrows()
+        ]
+
+        return {
+            "comune_id": comune_id,
+            "n_segnalazioni_accessibilita": n_accessibilita,
+            "totale_disservizi": totale_disservizi,
+            "quota_pct": quota_pct,
+            "trend_mensile": trend_mensile,
+            "dato_sottostante": (
+                f"{n_accessibilita} segnalazioni di disservizio \"Accessibilità\" su {totale_disservizi} disservizi "
+                f"totali registrati ({quota_pct}%)."
+            ),
+        }
+    except Exception as e:
+        print(f"Errore accessibilità pilastro comune {comune_id}: {e}")
+        return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO — SEZIONE 3: RADAR WELFARE & INNOVAZIONE
+# ============================================================
+
+CATEGORIE_WELFARE_INNOVAZIONE = {
+    "Accessibilità potenziata": [
+        "Barriere architettoniche", "Percorsi inclusivi", "Segnaletica per ipovedenti", "Accessibilità digitale",
+    ],
+    "Digitalizzazione servizi": [
+        "App turistica", "Prenotazioni online", "Pagamenti digitali", "Audioguide digitali",
+    ],
+    "Sostenibilità ambientale": [
+        "Mobilità verde", "Riduzione plastica monouso", "Efficientamento energetico", "Gestione rifiuti",
+    ],
+    "Inclusione sociale": [
+        "Prezzi agevolati categorie fragili", "Programmi per disoccupati/giovani", "Integrazione comunità straniere",
+    ],
+    "Valorizzazione del patrimonio": [
+        "Restauri", "Recupero siti minori", "Nuove aperture", "Manutenzione preventiva",
+    ],
+    "Formazione e competenze": [
+        "Formazione operatori", "Competenze digitali del personale", "Corsi di lingua per il turismo",
+    ],
+    "Partecipazione e ascolto": [
+        "Consultazioni pubbliche", "Sondaggi residenti", "Tavoli di confronto", "Coinvolgimento associazioni locali",
+    ],
+}
+
+
+@app.get("/welfare-innovazione/{comune_id}")
+def get_welfare_innovazione(comune_id: str):
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+
+        iniziative_resp = supabase.table("iniziative_welfare_innovazione").select("*") \
+            .eq("piano_id", piano["id"]).order("inserito_il", desc=True).execute()
+        iniziative = iniziative_resp.data or []
+
+        conteggio_categoria = {cat: 0 for cat in CATEGORIE_WELFARE_INNOVAZIONE}
+        for i in iniziative:
+            if i.get("stato") == "attiva" and i.get("categoria") in conteggio_categoria:
+                conteggio_categoria[i["categoria"]] += 1
+
+        n_categorie_coperte = sum(1 for v in conteggio_categoria.values() if v > 0)
+
+        radar = [
+            {
+                "categoria": cat,
+                "sotto_voci": CATEGORIE_WELFARE_INNOVAZIONE[cat],
+                "n_iniziative_attive": conteggio_categoria[cat],
+            }
+            for cat in CATEGORIE_WELFARE_INNOVAZIONE
+        ]
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "n_iniziative_totali": len(iniziative),
+            "n_iniziative_attive": sum(1 for i in iniziative if i.get("stato") == "attiva"),
+            "n_categorie_coperte": n_categorie_coperte,
+            "n_categorie_totali": len(CATEGORIE_WELFARE_INNOVAZIONE),
+            "radar": radar,
+            "iniziative": iniziative,
+            "categorie_disponibili": CATEGORIE_WELFARE_INNOVAZIONE,
+        }
+    except Exception as e:
+        print(f"Errore welfare innovazione comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/welfare-innovazione")
+def crea_iniziativa_welfare(payload: dict):
+    try:
+        comune_id_str = payload.get("comune_id")
+        categoria = payload.get("categoria")
+        titolo = payload.get("titolo")
+        sotto_voce = payload.get("sotto_voce")
+        descrizione = payload.get("descrizione")
+        stato = payload.get("stato", "attiva")
+
+        if not comune_id_str or not categoria or not titolo:
+            return {"errore": "comune_id, categoria e titolo sono obbligatori"}
+
+        if categoria not in CATEGORIE_WELFARE_INNOVAZIONE:
+            return {"errore": "Categoria non valida"}
+
+        if stato not in ("attiva", "completata", "sospesa"):
+            return {"errore": "Stato non valido"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        record = {
+            "piano_id": piano["id"],
+            "comune_id": comune_id_str,
+            "categoria": categoria,
+            "sotto_voce": sotto_voce,
+            "titolo": titolo,
+            "descrizione": descrizione,
+            "stato": stato,
+        }
+        creato_resp = supabase.table("iniziative_welfare_innovazione").insert(record).execute()
+
+        return {"status": "salvato", "iniziativa": creato_resp.data[0] if creato_resp.data else None}
+    except Exception as e:
+        print(f"Errore creazione iniziativa welfare: {e}")
+        return {"errore": str(e)}
+
+
+@app.put("/welfare-innovazione/{iniziativa_id}")
+def aggiorna_iniziativa_welfare(iniziativa_id: int, payload: dict):
+    try:
+        stato = payload.get("stato")
+        if stato not in ("attiva", "completata", "sospesa"):
+            return {"errore": "Stato non valido"}
+        supabase.table("iniziative_welfare_innovazione").update({"stato": stato}).eq("id", iniziativa_id).execute()
+        return {"status": "aggiornato"}
+    except Exception as e:
+        print(f"Errore aggiornamento iniziativa welfare {iniziativa_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.delete("/welfare-innovazione/{iniziativa_id}")
+def elimina_iniziativa_welfare(iniziativa_id: int):
+    try:
+        supabase.table("iniziative_welfare_innovazione").delete().eq("id", iniziativa_id).execute()
+        return {"status": "eliminato"}
+    except Exception as e:
+        print(f"Errore eliminazione iniziativa welfare {iniziativa_id}: {e}")
+        return {"errore": str(e)}
+PILASTRI_OBIETTIVI = {
+    "sostenibilita": {
+        "nome": "Sostenibilità e Carico",
+        "metrica": "Indice di concentrazione weekend (%)",
+        "direzione_attesa": "diminuire",
+    },
+    "accessibilita": {
+        "nome": "Accessibilità",
+        "metrica": "Quota segnalazioni accessibilità sul totale disservizi (%)",
+        "direzione_attesa": "diminuire",
+    },
+    "welfare_innovazione": {
+        "nome": "Welfare e Innovazione",
+        "metrica": "Categorie coperte da iniziative attive (su 7)",
+        "direzione_attesa": "aumentare",
+    },
+}
+
+
+def leggi_valore_attuale_pilastro(comune_id, pilastro):
+    if pilastro == "sostenibilita":
+        dati = get_sostenibilita_carico(comune_id)
+        if "errore" in dati:
+            return None
+        return dati["indice_concentrazione_pct"]
+    elif pilastro == "accessibilita":
+        dati = get_accessibilita_pilastro(comune_id)
+        if "errore" in dati:
+            return None
+        return dati["quota_pct"]
+    elif pilastro == "welfare_innovazione":
+        dati = get_welfare_innovazione(comune_id)
+        if "errore" in dati:
+            return None
+        return dati["n_categorie_coperte"]
+    return None
+
+
+def calcola_semaforo_obiettivo(valore_iniziale, valore_attuale, valore_target, data_inizio, data_scadenza, oggi):
+    giorni_totali = (data_scadenza - data_inizio).days
+    giorni_trascorsi = (oggi - data_inizio).days
+    progresso_temporale = min(max(giorni_trascorsi / giorni_totali, 0), 1) if giorni_totali > 0 else 1
+
+    distanza_totale = valore_target - valore_iniziale
+    distanza_percorsa = valore_attuale - valore_iniziale
+
+    if distanza_totale == 0:
+        progresso_obiettivo = 1.0
+    else:
+        progresso_obiettivo = distanza_percorsa / distanza_totale
+
+    scostamento = progresso_obiettivo - progresso_temporale
+
+    if progresso_obiettivo >= 1.0:
+        colore = "verde"
+    elif scostamento >= -0.15:
+        colore = "verde"
+    elif scostamento >= -0.35:
+        colore = "giallo"
+    else:
+        colore = "rosso"
+
+    return {
+        "colore": colore,
+        "progresso_obiettivo_pct": round(progresso_obiettivo * 100, 1),
+        "progresso_temporale_pct": round(progresso_temporale * 100, 1),
+    }
+
+
+@app.get("/obiettivi-piano/{comune_id}")
+def get_obiettivi_piano(comune_id: str):
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+
+        obiettivi_resp = supabase.table("obiettivi_piano").select("*") \
+            .eq("piano_id", piano["id"]).eq("attivo", True).execute()
+        obiettivi = obiettivi_resp.data or []
+
+        oggi = datetime.now().date()
+        risultati = []
+        for o in obiettivi:
+            valore_attuale = leggi_valore_attuale_pilastro(comune_id, o["pilastro"])
+            pilastro_info = PILASTRI_OBIETTIVI.get(o["pilastro"], {})
+
+            if valore_attuale is None:
+                risultati.append({
+                    **o,
+                    "pilastro_nome": pilastro_info.get("nome", o["pilastro"]),
+                    "metrica": pilastro_info.get("metrica", ""),
+                    "valore_attuale": None,
+                    "semaforo": None,
+                    "messaggio": "Valore attuale non disponibile: dati insufficienti per questo pilastro.",
+                })
+                continue
+
+            data_inizio = datetime.strptime(o["data_inizio"], "%Y-%m-%d").date()
+            data_scadenza = datetime.strptime(o["data_scadenza"], "%Y-%m-%d").date()
+
+            semaforo = calcola_semaforo_obiettivo(
+                o["valore_iniziale"], valore_attuale, o["valore_target"], data_inizio, data_scadenza, oggi
+            )
+
+            risultati.append({
+                **o,
+                "pilastro_nome": pilastro_info.get("nome", o["pilastro"]),
+                "metrica": pilastro_info.get("metrica", ""),
+                "valore_attuale": valore_attuale,
+                "semaforo": semaforo["colore"],
+                "progresso_obiettivo_pct": semaforo["progresso_obiettivo_pct"],
+                "progresso_temporale_pct": semaforo["progresso_temporale_pct"],
+                "dato_sottostante": (
+                    f"Partito da {o['valore_iniziale']}, target {o['valore_target']} entro il "
+                    f"{data_scadenza.strftime('%d/%m/%Y')}. Valore attuale: {valore_attuale}. "
+                    f"Progresso verso l'obiettivo: {semaforo['progresso_obiettivo_pct']}%, "
+                    f"tempo trascorso: {semaforo['progresso_temporale_pct']}%."
+                ),
+            })
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "obiettivi": risultati,
+            "pilastri_disponibili": PILASTRI_OBIETTIVI,
+        }
+    except Exception as e:
+        print(f"Errore obiettivi piano comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/obiettivi-piano")
+def crea_obiettivo_piano(payload: dict):
+    try:
+        comune_id_str = payload.get("comune_id")
+        pilastro = payload.get("pilastro")
+        valore_target = payload.get("valore_target")
+        data_scadenza = payload.get("data_scadenza")
+        note = payload.get("note")
+
+        if not comune_id_str or not pilastro or valore_target is None or not data_scadenza:
+            return {"errore": "comune_id, pilastro, valore_target e data_scadenza sono obbligatori"}
+
+        if pilastro not in PILASTRI_OBIETTIVI:
+            return {"errore": "Pilastro non valido"}
+
+        valore_iniziale = leggi_valore_attuale_pilastro(comune_id_str, pilastro)
+        if valore_iniziale is None:
+            return {"errore": "Impossibile leggere il valore attuale per questo pilastro: dati insufficienti"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        record = {
+            "piano_id": piano["id"],
+            "comune_id": comune_id_str,
+            "pilastro": pilastro,
+            "valore_iniziale": valore_iniziale,
+            "valore_target": valore_target,
+            "direzione": PILASTRI_OBIETTIVI[pilastro]["direzione_attesa"],
+            "data_inizio": datetime.now().strftime("%Y-%m-%d"),
+            "data_scadenza": data_scadenza,
+            "note": note,
+        }
+        creato_resp = supabase.table("obiettivi_piano").insert(record).execute()
+
+        return {"status": "salvato", "obiettivo": creato_resp.data[0] if creato_resp.data else None}
+    except Exception as e:
+        print(f"Errore creazione obiettivo piano: {e}")
+        return {"errore": str(e)}
+
+
+@app.delete("/obiettivi-piano/{obiettivo_id}")
+def elimina_obiettivo_piano(obiettivo_id: int):
+    try:
+        supabase.table("obiettivi_piano").update({"attivo": False}).eq("id", obiettivo_id).execute()
+        return {"status": "disattivato"}
+    except Exception as e:
+        print(f"Errore eliminazione obiettivo piano {obiettivo_id}: {e}")
+        return {"errore": str(e)}
