@@ -2795,3 +2795,95 @@ def get_dimensione_sociale(comune_id: str):
     except Exception as e:
         print(f"Errore dimensione sociale comune {comune_id}: {e}")
         return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO — IDENTIKIT DESTINAZIONE
+# ============================================================
+
+VOCAZIONI_TURISTICHE = [
+    "Balneare / Mare",
+    "Montano",
+    "Lacustre",
+    "Culturale / Storico-artistico",
+    "Archeologico",
+    "Naturalistico / Outdoor",
+    "Faunistico / Birdwatching",
+    "Enogastronomico",
+    "Benessere / Wellness",
+    "Termale",
+    "Religioso / Spirituale / Pellegrinaggio",
+    "Sportivo",
+    "Cicloturismo",
+    "Escursionistico / Trekking",
+    "Urbano / Città d'arte",
+    "Congressuale / Business (MICE)",
+    "Di massa (alto volume, bassa permanenza)",
+    "Esperienziale / Slow tourism",
+    "Sanitario / Medico",
+    "Rurale / Agriturismo",
+    "Sostenibile / Ecoturismo",
+    "Industriale / Archeologia industriale",
+    "Enologico (vino)",
+    "Family / Family-friendly",
+    "Scolastico / Educativo",
+    "Eventi e festival",
+]
+
+
+@app.get("/identikit-destinazione/{comune_id}")
+def get_identikit_destinazione(comune_id: str):
+    """Recupera l'identikit della destinazione (vocazione attuale e
+    desiderata, scelte manualmente dal comune) e l'elenco completo delle
+    vocazioni turistiche disponibili per la selezione."""
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+
+        identikit_resp = supabase.table("identikit_destinazione").select("*") \
+            .eq("piano_id", piano["id"]).limit(1).execute()
+        identikit = identikit_resp.data[0] if identikit_resp.data else None
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "identikit": identikit,
+            "vocazioni_disponibili": VOCAZIONI_TURISTICHE,
+        }
+    except Exception as e:
+        print(f"Errore identikit destinazione comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.put("/identikit-destinazione")
+def aggiorna_identikit_destinazione(payload: dict):
+    """Salva o aggiorna l'identikit della destinazione per il piano attivo
+    del comune. Una sola riga per piano: la nuova scelta sostituisce
+    sempre la precedente."""
+    try:
+        comune_id_str = payload.get("comune_id")
+        if not comune_id_str:
+            return {"errore": "comune_id è obbligatorio"}
+
+        vocazione_attuale = payload.get("vocazione_attuale")
+        vocazione_desiderata = payload.get("vocazione_desiderata")
+        note = payload.get("note")
+
+        if vocazione_attuale and vocazione_attuale not in VOCAZIONI_TURISTICHE:
+            return {"errore": "Vocazione attuale non valida"}
+        if vocazione_desiderata and vocazione_desiderata not in VOCAZIONI_TURISTICHE:
+            return {"errore": "Vocazione desiderata non valida"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        record = {
+            "piano_id": piano["id"],
+            "comune_id": comune_id_str,
+            "vocazione_attuale": vocazione_attuale,
+            "vocazione_desiderata": vocazione_desiderata,
+            "note": note,
+            "aggiornato_il": datetime.now().isoformat(),
+        }
+        supabase.table("identikit_destinazione").upsert(record, on_conflict="piano_id").execute()
+
+        return {"status": "salvato", "piano_id": piano["id"]}
+    except Exception as e:
+        print(f"Errore aggiornamento identikit destinazione: {e}")
+        return {"errore": str(e)}
