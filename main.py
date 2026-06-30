@@ -2891,3 +2891,89 @@ def aggiorna_identikit_destinazione(payload: dict):
     except Exception as e:
         print(f"Errore aggiornamento identikit destinazione: {e}")
         return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO — STORICO INDICATORI STANDARD
+# ============================================================
+
+def esegui_snapshot_indicatori(comune_id):
+    """Calcola gli indicatori standard correnti per un comune e li salva
+    come snapshot permanente in indicatori_storico. Funzione interna
+    riutilizzata sia dall'endpoint singolo che da quello su tutti i comuni."""
+    indicatori = get_indicatori_standard(comune_id)
+    if "errore" in indicatori:
+        return {"errore": indicatori["errore"], "comune_id": comune_id}
+
+    stagionalita = indicatori.get("stagionalita", {})
+    internazionalizzazione = indicatori.get("internazionalizzazione", {})
+
+    if not stagionalita.get("dati_sufficienti") and not internazionalizzazione.get("dati_sufficienti"):
+        return {"status": "nessun indicatore con dati sufficienti da salvare", "comune_id": comune_id}
+
+    piano = ottieni_o_crea_piano_attivo(comune_id)
+
+    record = {
+        "piano_id": piano["id"],
+        "comune_id": comune_id,
+        "coefficiente_variazione_pct": stagionalita.get("coefficiente_variazione_pct"),
+        "livello_stagionalita": stagionalita.get("livello"),
+        "quota_estera_pct": internazionalizzazione.get("quota_estera_pct"),
+    }
+    creato_resp = supabase.table("indicatori_storico").insert(record).execute()
+
+    return {"status": "salvato", "comune_id": comune_id, "snapshot": creato_resp.data[0] if creato_resp.data else None}
+
+
+@app.get("/indicatori-storico/{comune_id}")
+def get_indicatori_storico(comune_id: str):
+    """Recupera lo storico degli snapshot mensili degli indicatori standard
+    per un comune, dal più vecchio al più recente, per costruire un grafico
+    dell'evoluzione nel tempo."""
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+
+        storico_resp = supabase.table("indicatori_storico").select("*") \
+            .eq("piano_id", piano["id"]).order("generato_il", desc=False).execute()
+        storico = storico_resp.data or []
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "n_snapshot": len(storico),
+            "storico": storico,
+        }
+    except Exception as e:
+        print(f"Errore storico indicatori comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/indicatori-storico/{comune_id}/salva-snapshot")
+def salva_snapshot_indicatori(comune_id: str):
+    """Salva uno snapshot manuale degli indicatori standard correnti."""
+    try:
+        return esegui_snapshot_indicatori(comune_id)
+    except Exception as e:
+        print(f"Errore salvataggio snapshot indicatori comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/indicatori-storico/salva-snapshot-tutti")
+def salva_snapshot_indicatori_tutti():
+    """Salva lo snapshot degli indicatori standard per tutti i comuni che
+    hanno un piano strategico attivo. Pensato per essere richiamato da un
+    cron job mensile, analogamente allo snapshot SWOT."""
+    try:
+        piani_resp = supabase.table("piani_strategici").select("comune_id").neq("stato", "archiviato").execute()
+        comuni = list({p["comune_id"] for p in (piani_resp.data or [])})
+
+        risultati = []
+        for comune_id in comuni:
+            esito = esegui_snapshot_indicatori(comune_id)
+            risultati.append(esito)
+
+        return {
+            "comuni_processati": len(comuni),
+            "risultati": risultati
+        }
+    except Exception as e:
+        print(f"Errore snapshot indicatori tutti i comuni: {e}")
+        return {"errore": str(e)}
