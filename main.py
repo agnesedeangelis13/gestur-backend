@@ -2856,20 +2856,24 @@ def get_identikit_destinazione(comune_id: str):
 def aggiorna_identikit_destinazione(payload: dict):
     """Salva o aggiorna l'identikit della destinazione per il piano attivo
     del comune. Una sola riga per piano: la nuova scelta sostituisce
-    sempre la precedente."""
+    sempre la precedente. Vocazione attuale e desiderata sono liste,
+    per permettere di selezionare più vocazioni contemporaneamente."""
     try:
         comune_id_str = payload.get("comune_id")
         if not comune_id_str:
             return {"errore": "comune_id è obbligatorio"}
 
-        vocazione_attuale = payload.get("vocazione_attuale")
-        vocazione_desiderata = payload.get("vocazione_desiderata")
+        vocazione_attuale = payload.get("vocazione_attuale") or []
+        vocazione_desiderata = payload.get("vocazione_desiderata") or []
         note = payload.get("note")
 
-        if vocazione_attuale and vocazione_attuale not in VOCAZIONI_TURISTICHE:
-            return {"errore": "Vocazione attuale non valida"}
-        if vocazione_desiderata and vocazione_desiderata not in VOCAZIONI_TURISTICHE:
-            return {"errore": "Vocazione desiderata non valida"}
+        if not isinstance(vocazione_attuale, list) or not isinstance(vocazione_desiderata, list):
+            return {"errore": "vocazione_attuale e vocazione_desiderata devono essere liste"}
+
+        non_valide_attuale = [v for v in vocazione_attuale if v not in VOCAZIONI_TURISTICHE]
+        non_valide_desiderata = [v for v in vocazione_desiderata if v not in VOCAZIONI_TURISTICHE]
+        if non_valide_attuale or non_valide_desiderata:
+            return {"errore": f"Vocazioni non valide: {non_valide_attuale + non_valide_desiderata}"}
 
         piano = ottieni_o_crea_piano_attivo(comune_id_str)
 
