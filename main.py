@@ -269,7 +269,7 @@ def normalizza_fascia(fascia):
 def calcola_composizione_giorno(dati_storici, giorno_settimana):
     righe_giorno = [r for r in dati_storici if pd.to_datetime(r["data"]).weekday() == giorno_settimana]
     if not righe_giorno:
-        righe_giorno = dati_storici  # fallback: usa tutto lo storico se manca quel giorno specifico
+        righe_giorno = dati_storici
     if not righe_giorno:
         return []
     composizione = {}
@@ -554,7 +554,7 @@ def calcola_clv_clusters(sito_id_int, giorni_storico=90, data_inizio=None, data_
     bookshop_base = (tariffe["percentuale_bookshop"]/100) * tariffe["spesa_media_bookshop"]
     ristorazione_base = (tariffe["percentuale_ristorazione"]/100) * tariffe["spesa_media_ristorazione"]
 
-    cluster_dati = {}  # chiave: (provenienza, fascia, tipo_visitatore)
+    cluster_dati = {}
 
     for r in storico:
         fasce = (r.get("fasce") or "").split(", ")
@@ -707,8 +707,6 @@ def calcola_preavviso_marketing(sito_id_int):
     oggi = datetime.now()
     mese_prossimo = oggi.month + 1 if oggi.month < 12 else 1
     anno_riferimento = oggi.year - 1 if oggi.month < 12 else oggi.year - 1
-    # Se il mese prossimo cade nell'anno successivo (es. oggi dicembre, prossimo mese gennaio),
-    # l'anno di riferimento dello scorso ciclo resta comunque "un anno fa rispetto a oggi".
 
     snapshot_resp = supabase.table("storico_clv_mensile").select("*") \
         .eq("sito_id", sito_id_int).eq("anno", anno_riferimento).eq("mese", mese_prossimo) \
@@ -826,8 +824,6 @@ def budget_promozione(sito_id: str):
 
         # ---- WELCOME DESK COST OPTIMIZER ----
 def calcola_composizione_settimana(storico, date_settimana):
-    """Aggrega la composizione per cluster su un insieme di giorni futuri, usando il pattern
-    storico del relativo giorno della settimana (stesso meccanismo di calcola_composizione_giorno)."""
     composizione_per_giorno = []
     for d in date_settimana:
         giorno_settimana = pd.to_datetime(d).weekday()
@@ -886,7 +882,7 @@ def welcome_desk_planner(sito_id: str):
             pct_cartaceo_giorno = 0
             for comp in composizione:
                 chiave = (comp["fascia"], comp["provenienza_macro"], comp["tipo_visitatore"])
-                pref_cartaceo = coeff_canale.get(chiave, 50)  # default neutro se cluster non configurato
+                pref_cartaceo = coeff_canale.get(chiave, 50)
                 pct_cartaceo_giorno += comp["quota"] * pref_cartaceo
 
             composizione_ordinata = sorted(composizione, key=lambda x: x["quota"], reverse=True)
@@ -916,9 +912,7 @@ def welcome_desk_planner(sito_id: str):
 
         risparmio_stimato = None
         if costo_stampa is not None:
-            # Riduzione di stampa proporzionale alla quota digitale della settimana,
-            # rispetto a un'allocazione di base 50/50 presa come riferimento neutro.
-            riduzione_pct = max(0, pct_digitale_settimana - 50) / 50  # 0 se <=50% digitale, fino a 1 se 100% digitale
+            riduzione_pct = max(0, pct_digitale_settimana - 50) / 50
             risparmio_stimato = round(costo_stampa * riduzione_pct, 2)
 
         giorni_weekend = [g for g in dettaglio_giorni if g["e_weekend"]]
@@ -1124,8 +1118,6 @@ Struttura la relazione con queste sezioni:
 
         # ---- APPROVAZIONE RICHIESTA EVENTO ----
 def calcola_impatto_da_saturazione(saturazione):
-    """Mappa il tasso di saturazione stimato della richiesta sulla scala basso/medio/alto
-    usata da eventi_locali per la variabile esogena del SARIMAX."""
     if saturazione is None:
         return "medio"
     if saturazione < 50:
@@ -1143,8 +1135,6 @@ def approva_richiesta_evento(richiesta_id: int):
         if not richiesta:
             return {"errore": "Richiesta non trovata"}
 
-        # Evita di creare un evento duplicato se la richiesta è già stata approvata in precedenza:
-        # controlla se esiste già un evento in eventi_locali collegato a questa richiesta.
         evento_esistente_resp = supabase.table("eventi_locali").select("*") \
             .eq("richiesta_evento_id", richiesta_id).execute()
         if evento_esistente_resp.data:
@@ -1183,14 +1173,6 @@ def approva_richiesta_evento(richiesta_id: int):
         return {"errore": str(e)}
 
 def tenta_sarimax_su_serie(valori, passi_avanti=1):
-    """Tenta di addestrare un SARIMAX semplice (senza stagionalità, che richiederebbe troppi dati)
-    su una serie di valori ordinata temporalmente. Restituisce (previsione, usato_sarimax).
-    Se i punti sono troppo pochi per il modello o il fit fallisce numericamente, restituisce
-    (None, False) così il chiamante può ricadere sulla media storica senza fingere una previsione
-    che la matematica non può sostenere con questi dati.
-    """
-    # Minimo realistico per un SARIMAX (1,1,1) senza stagionalità: sotto 5 punti
-    # il modello non ha gradi di libertà sufficienti per stimare i suoi parametri.
     if len(valori) < 5:
         return None, False
     try:
@@ -1206,9 +1188,6 @@ def tenta_sarimax_su_serie(valori, passi_avanti=1):
 
 
 def conta_eventi_per_mese(date_lista):
-    """Aggrega una lista di date (stringhe YYYY-MM-DD) in conteggio eventi per mese,
-    riempiendo con zero i mesi senza eventi nel range osservato, per ottenere
-    una serie temporale regolare adatta a SARIMAX."""
     if not date_lista:
         return []
     date_parsed = sorted(pd.to_datetime(date_lista))
@@ -1227,10 +1206,6 @@ def conta_eventi_per_mese(date_lista):
 
 
 def costruisci_esogene_evento(date_lista, sito_id, regione="Lazio"):
-    """Costruisce le variabili esogene (festività, weekend, meteo completo) per una lista di date
-    di eventi storici, riusando le stesse fonti dati già presenti nel sistema (festivita_regionali,
-    meteo_giornaliero) invece di duplicarle: stessa logica di genera_variabili_esogene, applicata
-    alle date specifiche in cui si sono svolti gli eventi piuttosto che a un range continuo."""
     date_parsed = [pd.to_datetime(d) for d in date_lista]
     date_str = [d.strftime("%Y-%m-%d") for d in date_parsed]
 
@@ -1263,14 +1238,6 @@ def costruisci_esogene_evento(date_lista, sito_id, regione="Lazio"):
 
 
 def tenta_sarimax_con_esogene(valori, date_lista, sito_id, scenario_esogeno, regione="Lazio"):
-    """Versione del SARIMAX per eventi che include variabili esogene complete (festività, weekend,
-    pioggia, neve, sole, temperatura), analoga a simula_scenario per le presenze ma applicata a una
-    serie di eventi sparsi nel tempo anziché a una serie settimanale continua. Richiede più punti
-    della versione semplice perché il modello deve stimare anche i coefficienti delle 6 variabili
-    esogene: sotto questa soglia il fit non avrebbe gradi di libertà sufficienti, quindi si segnala
-    onestamente l'impossibilità invece di azzardare un numero che la matematica non sostiene con
-    questi dati.
-    """
     MINIMO_PUNTI_CON_ESOGENE = 16
     if len(valori) < MINIMO_PUNTI_CON_ESOGENE:
         return None, False, len(valori), MINIMO_PUNTI_CON_ESOGENE
@@ -1317,8 +1284,6 @@ def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
             return {"errore": "Nessuna richiesta evento trovata"}
 
         def margine_effettivo(r):
-            # Usa il margine reale se il consuntivo è stato inserito, altrimenti ricade sulla stima:
-            # questo permette di avere sempre un numero utile anche prima che l'evento si sia svolto.
             if r.get("consuntivo_inserito") and r.get("margine_netto_reale") is not None:
                 return r["margine_netto_reale"]
             return r.get("margine_netto_stimato") or 0
@@ -1333,7 +1298,6 @@ def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
 
         n_con_consuntivo = sum(1 for r in confermate if r.get("consuntivo_inserito"))
 
-        # Confronto stima vs reale, solo sulle richieste che hanno già un consuntivo inserito
         confronto_stima_reale = []
         for r in confermate:
             if r.get("consuntivo_inserito") and r.get("margine_netto_reale") is not None:
@@ -1349,8 +1313,6 @@ def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
                     "scostamento_pct": round(((reale - stimato) / abs(stimato)) * 100, 1) if stimato else None
                 })
 
-        # Segmentazione per tipologia: su tutte le richieste, indipendentemente dallo stato,
-        # per capire quali tipologie generano più valore E quali saturano di più gli spazi.
         segmenti = {}
         for r in richieste:
             tip = r["tipologia_evento"]
@@ -1373,14 +1335,6 @@ def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
             })
         segmentazione.sort(key=lambda x: x["margine_totale"], reverse=True)
 
-        # Previsione per tipologia: basata solo su richieste confermate (approvata/completata),
-        # cioè eventi realmente accaduti, per dare una stima solida di cosa aspettarsi da una
-        # nuova richiesta della stessa tipologia. Per ciascuna tipologia si tenta un SARIMAX
-        # reale su margine, dimensione attesa e conteggio mensile eventi; se i punti disponibili
-        # sono troppo pochi per il modello (o il fit fallisce numericamente), si ricade sulla
-        # media storica, segnalando esplicitamente il metodo usato per ogni valore: questo evita
-        # di presentare come "previsione modellata" un numero che la matematica non sostiene
-        # ancora con questi dati, mantenendo comunque sempre un risultato utile da mostrare.
         previsioni_tipologia = {}
         for r in confermate:
             tip = r["tipologia_evento"]
@@ -1454,9 +1408,6 @@ def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
 @app.get("/verifica-disponibilita-evento")
 def verifica_disponibilita_evento(spazio_id: int, data_inizio: str, data_fine: str, sito_id: int, richiesta_id: int = None):
     try:
-        # Vincolo rigido: lo stesso spazio non può ospitare due eventi confermati
-        # con date che si sovrappongono, anche se nello stesso giorno c'è spazio per
-        # eventi diversi in spazi diversi dello stesso sito.
         query = supabase.table("richieste_eventi").select("*") \
             .eq("spazio_id", spazio_id) \
             .in_("stato_richiesta", ["approvata", "completata"]) \
@@ -1477,10 +1428,6 @@ def verifica_disponibilita_evento(spazio_id: int, data_inizio: str, data_fine: s
                 "stato_richiesta": c["stato_richiesta"]
             }
 
-        # Suggerimento non bloccante: confronta l'affluenza storica delle presenze
-        # ordinarie nello stesso range di giorni (stesso mese/giorno, anni precedenti
-        # se disponibili) con la media generale del sito, per segnalare se il periodo
-        # scelto per l'evento coincide con un periodo già di alta affluenza turistica.
         alta_affluenza = False
         scostamento_pct = None
         try:
@@ -1494,7 +1441,6 @@ def verifica_disponibilita_evento(spazio_id: int, data_inizio: str, data_fine: s
 
                 inizio_dt = pd.to_datetime(data_inizio)
                 fine_dt = pd.to_datetime(data_fine)
-                # Stesso intervallo di mese/giorno, su qualsiasi anno presente nello storico
                 periodo_storico = aggregato_giorno[
                     aggregato_giorno.index.map(lambda d: (d.month, d.day) >= (inizio_dt.month, inizio_dt.day) and (d.month, d.day) <= (fine_dt.month, fine_dt.day))
                 ]
@@ -1622,10 +1568,6 @@ def simula_scenario_evento(payload: dict):
 # ============================================================
 
 def ottieni_o_crea_piano_attivo(comune_id_str):
-    """Recupera il piano strategico attivo per il comune. Se non esiste,
-    lo crea automaticamente con titolo e periodo di default (anno corrente
-    -> anno corrente + 2), in stato 'bozza', per non bloccare l'accesso
-    alla sezione in attesa di un setup manuale preliminare."""
     esistente_resp = supabase.table("piani_strategici").select("*") \
         .eq("comune_id", comune_id_str).neq("stato", "archiviato") \
         .order("creato_il", desc=True).limit(1).execute()
@@ -1645,7 +1587,6 @@ def ottieni_o_crea_piano_attivo(comune_id_str):
 
 
 def ottieni_siti_comune(comune_id_str):
-    """Recupera tutti i siti culturali appartenenti a un comune."""
     siti_resp = supabase.table("siti_culturali").select("id, nome_sito") \
         .eq("comune_id", comune_id_str).execute()
     return siti_resp.data or []
@@ -1663,8 +1604,6 @@ def get_piano_strategico(comune_id: str):
 
 @app.put("/piano-strategico/{piano_id}")
 def aggiorna_piano_strategico(piano_id: int, payload: dict):
-    """Permette di rinominare il piano o modificarne il periodo,
-    senza toccare i dati delle sezioni già collegate a piano_id."""
     try:
         campi_consentiti = {"titolo", "anno_inizio", "anno_fine", "stato"}
         aggiornamento = {k: v for k, v in payload.items() if k in campi_consentiti}
@@ -1678,17 +1617,11 @@ def aggiorna_piano_strategico(piano_id: int, payload: dict):
 
 
 SOGLIA_MESI_BENCHMARK_DATATO = 18
-GIORNI_MINIMI_FINESTRA = 15  # sotto questa soglia per lato, il confronto è troppo rumoroso per essere mostrato
-GIORNI_MASSIMI_FINESTRA = 365  # mai oltre 12 mesi per lato, anche con storico molto lungo
+GIORNI_MINIMI_FINESTRA = 15
+GIORNI_MASSIMI_FINESTRA = 365
 
 
 def calcola_finestra_adattiva(prima_data, oggi):
-    """Calcola una finestra di confronto (in giorni) che si adatta a quanto
-    storico è realmente disponibile, invece di richiedere sempre 24 mesi fissi.
-    Più dati ci sono, più la finestra si allarga (fino a un massimo di 12 mesi
-    per lato), e con essa cresce l'affidabilità del confronto. Sotto la soglia
-    minima, segnala onestamente che il dato non è ancora disponibile invece
-    di calcolare un numero che il rumore statistico renderebbe inaffidabile."""
     giorni_totali_storico = (oggi - prima_data).days
     giorni_finestra = giorni_totali_storico // 2
 
@@ -1709,12 +1642,6 @@ def calcola_finestra_adattiva(prima_data, oggi):
 
 @app.get("/benchmark-regionale/{comune_id}")
 def get_benchmark_regionale(comune_id: str):
-    """Calcola la crescita reale del comune con una finestra di confronto
-    adattiva (si allarga progressivamente man mano che lo storico di presenze
-    cresce, fino a un massimo di 12 mesi per lato) e la confronta con l'ultimo
-    valore di benchmark regionale inserito manualmente. Segnala onestamente
-    se il dato esterno manca, è datato, o se lo storico di presenze è ancora
-    troppo scarso per qualsiasi confronto significativo."""
     try:
         piano = ottieni_o_crea_piano_attivo(comune_id)
 
@@ -1819,8 +1746,6 @@ def get_benchmark_regionale(comune_id: str):
 
 @app.post("/benchmark-regionale")
 def crea_benchmark_regionale(payload: dict):
-    """Inserisce o aggiorna (upsert) il valore di benchmark regionale
-    per un anno di riferimento specifico, collegato al piano attivo del comune."""
     try:
         comune_id_str = payload.get("comune_id")
         anno_riferimento = payload.get("anno_riferimento")
@@ -1860,22 +1785,15 @@ SOGLIA_PCT_FORZA = 85.0
 SOGLIA_MIN_RICHIESTE_FORZA = 5
 
 SOGLIA_PCT_PROVENIENZA_RILEVANTE = 15.0
-SOGLIA_PCT_CRESCITA_FASCIA = 10.0  # crescita minima (%) tra periodo precedente e corrente per considerare una fascia "in crescita"
-SOGLIA_PCT_CALO_FASCIA = -10.0     # calo massimo (%) per considerare una fascia/provenienza "in declino" da una posizione dominante
-SOGLIA_PCT_DOMINANZA_PRECEDENTE = 20.0  # quota minima nel periodo precedente per parlare di "posizione prima dominante"
+SOGLIA_PCT_CRESCITA_FASCIA = 10.0
+SOGLIA_PCT_CALO_FASCIA = -10.0
+SOGLIA_PCT_DOMINANZA_PRECEDENTE = 20.0
 
 def nome_categoria(valore):
-    """Le categorie PIT sono salvate nel database già come etichette
-    leggibili (es. "Trasporti", "Wi-Fi e connettività"), non come chiavi
-    tecniche: non serve quindi nessuna mappatura, solo un fallback di
-    sicurezza nel caso il valore sia assente."""
     return valore or "Non specificata"
 
 
 def genera_debolezze_da_pit(richieste_pit, sito_per_id=None):
-    """Categorie disservizio PIT ricorrenti sopra soglia minima diventano
-    debolezze, ciascuna sempre accompagnata dal conteggio grezzo che la
-    sostiene (numero di segnalazioni su totale disservizi)."""
     conteggi = {}
     totale_disservizi = 0
     for r in richieste_pit:
@@ -1903,8 +1821,6 @@ def genera_debolezze_da_pit(richieste_pit, sito_per_id=None):
 
 
 def genera_forze_da_pit(richieste_pit):
-    """Categorie richiesta PIT con alto tasso di esito 'soddisfatta'
-    diventano forze, sempre con il conteggio grezzo sottostante."""
     per_categoria = {}
     for r in richieste_pit:
         cat = r.get("categoria")
@@ -1933,12 +1849,6 @@ def genera_forze_da_pit(richieste_pit):
 
 
 def calcola_quota_periodo(presenze, chiave_estrazione, giorni_finestra, oggi):
-    """Calcola, per due periodi consecutivi di pari durata (giorni_finestra
-    ciascuno), la quota percentuale di presenze per ciascun valore estratto
-    da chiave_estrazione (es. provenienza_macro o singola fascia). Restituisce
-    un dizionario {valore: {"quota_precedente": ..., "quota_corrente": ..., "n_corrente": ..., "n_precedente": ...}}.
-    Usato sia per individuare opportunità (fasce in crescita) che minacce
-    (fasce in calo da posizione dominante)."""
     inizio_corrente = oggi - timedelta(days=giorni_finestra)
     inizio_precedente = oggi - timedelta(days=giorni_finestra * 2)
 
@@ -1982,10 +1892,6 @@ def calcola_quota_periodo(presenze, chiave_estrazione, giorni_finestra, oggi):
 
 
 def genera_opportunita_provenienza(presenze, richieste_pit, giorni_finestra, oggi):
-    """Opportunità di tipo A: una provenienza macro che rappresenta una quota
-    rilevante delle presenze, ma le cui richieste PIT hanno un tasso di esito
-    'soddisfatta' inferiore alla media generale — segnale di domanda presente
-    ma servizio non ancora adeguato (es. lacuna linguistica)."""
     if giorni_finestra is None:
         return []
 
@@ -2040,9 +1946,6 @@ def genera_opportunita_provenienza(presenze, richieste_pit, giorni_finestra, ogg
 
 
 def genera_opportunita_minacce_fasce(presenze, giorni_finestra, oggi):
-    """Opportunità di tipo B (fasce in crescita) e minacce di tipo C
-    (fasce/provenienze in calo da posizione prima dominante), basate sul
-    confronto tra periodo corrente e precedente per ciascuna fascia d'età."""
     if giorni_finestra is None:
         return [], []
 
@@ -2093,9 +1996,6 @@ def genera_opportunita_minacce_fasce(presenze, giorni_finestra, oggi):
 
 
 def genera_minaccia_benchmark(comune_id, piano_id):
-    """Minaccia di tipo B: crescita propria significativamente sotto il
-    benchmark regionale inserito, se disponibile e non datato. Riusa la
-    stessa logica già calcolata per la sezione benchmark, senza duplicarla."""
     risultato_benchmark = get_benchmark_regionale(comune_id)
     if "errore" in risultato_benchmark:
         return None
@@ -2123,10 +2023,6 @@ def genera_minaccia_benchmark(comune_id, piano_id):
 
 @app.get("/swot-dinamica/{comune_id}")
 def get_swot_dinamica(comune_id: str):
-    """Genera la matrice SWOT a 4 quadranti incrociando dati PIT e presenze,
-    sempre con il dato grezzo sottostante esplicitato per ogni voce. Ogni
-    chiamata genera uno snapshot live; il salvataggio dello storico avviene
-    separatamente tramite l'endpoint di snapshot."""
     try:
         piano = ottieni_o_crea_piano_attivo(comune_id)
 
@@ -2191,9 +2087,6 @@ def get_swot_dinamica(comune_id: str):
 
 
 def esegui_snapshot_swot(comune_id):
-    """Calcola la SWOT dinamica corrente per un comune e la salva come
-    snapshot permanente in swot_storico. Funzione interna riutilizzata sia
-    dall'endpoint per singolo comune che da quello che itera su tutti i comuni."""
     swot = get_swot_dinamica(comune_id)
     if "errore" in swot:
         return {"errore": swot["errore"], "comune_id": comune_id}
@@ -2219,8 +2112,6 @@ def esegui_snapshot_swot(comune_id):
 
 @app.post("/swot-dinamica/{comune_id}/salva-snapshot")
 def salva_snapshot_swot(comune_id: str):
-    """Salva uno snapshot permanente della SWOT corrente in swot_storico,
-    permettendo di confrontare nel tempo come evolve l'analisi."""
     try:
         return esegui_snapshot_swot(comune_id)
     except Exception as e:
@@ -2230,10 +2121,6 @@ def salva_snapshot_swot(comune_id: str):
 
 @app.post("/swot-dinamica/salva-snapshot-tutti")
 def salva_snapshot_swot_tutti():
-    """Salva lo snapshot SWOT per tutti i comuni che hanno un piano
-    strategico attivo. Pensato per essere richiamato da un cron job mensile,
-    analogamente a come /aggiorna-previsioni viene richiamato settimanalmente
-    per le previsioni di affluenza."""
     try:
         piani_resp = supabase.table("piani_strategici").select("comune_id").neq("stato", "archiviato").execute()
         comuni = list({p["comune_id"] for p in (piani_resp.data or [])})
@@ -2256,12 +2143,6 @@ def salva_snapshot_swot_tutti():
 
 @app.get("/trend-domanda/{comune_id}")
 def get_trend_domanda(comune_id: str):
-    """Aggrega le presenze reali degli ultimi 12 mesi per mese e per sito,
-    per mostrare l'andamento della domanda turistica nel comune e il
-    contributo di ciascun sito culturale al totale. Per ciascun mese calcola
-    anche la provenienza macro e la fascia d'età dominanti, con la relativa
-    quota percentuale: un dato utile per orientare iniziative di marketing
-    mirate, oltre al solo volume di presenze."""
     try:
         siti = ottieni_siti_comune(comune_id)
         if not siti:
@@ -2344,9 +2225,6 @@ SOGLIA_MESI_MIN_STAGIONALITA = 6
 
 
 def livello_stagionalita(coefficiente_variazione):
-    """Classifica il coefficiente di variazione mensile in una fascia
-    leggibile: sotto il 20% il flusso è considerato regolare, sopra il 60%
-    fortemente concentrato in pochi mesi dell'anno."""
     if coefficiente_variazione < 20:
         return "bassa"
     elif coefficiente_variazione < 40:
@@ -2359,12 +2237,6 @@ def livello_stagionalita(coefficiente_variazione):
 
 @app.get("/indicatori-standard/{comune_id}")
 def get_indicatori_standard(comune_id: str):
-    """Calcola due indicatori standard sulla domanda turistica del comune:
-    il tasso di stagionalità (quanto le presenze sono concentrate in pochi
-    mesi dell'anno, misurato come coefficiente di variazione mensile) e
-    l'indice di internazionalizzazione (quota di presenze con provenienza
-    estera sul totale). Entrambi calcolati sui dati reali disponibili, con
-    soglie minime dichiarate per evitare numeri statisticamente fragili."""
     try:
         siti = ottieni_siti_comune(comune_id)
         if not siti:
@@ -2381,7 +2253,6 @@ def get_indicatori_standard(comune_id: str):
         df["data"] = pd.to_datetime(df["data"])
         df["mese"] = df["data"].dt.strftime("%Y-%m")
 
-        # ---- Tasso di stagionalità ----
         totali_mensili = df.groupby("mese")["gruppo"].sum()
         n_mesi = len(totali_mensili)
 
@@ -2408,7 +2279,6 @@ def get_indicatori_standard(comune_id: str):
                 ),
             })
 
-        # ---- Indice di internazionalizzazione ----
         totale_presenze = int(df["gruppo"].sum())
         df["provenienza_macro"] = df["provenienza"].apply(mappa_provenienza_macro)
         presenze_estere = int(df[~df["provenienza_macro"].isin(["Italia", "Locale"])]["gruppo"].sum())
@@ -2444,9 +2314,6 @@ def get_indicatori_standard(comune_id: str):
 
 @app.get("/analisi-competitor/{comune_id}")
 def get_analisi_competitor(comune_id: str):
-    """Recupera lo storico delle osservazioni qualitative inserite dal
-    comune sullo scenario competitivo esterno (es. iniziative di comuni
-    limitrofi), dalla più recente alla più vecchia."""
     try:
         piano = ottieni_o_crea_piano_attivo(comune_id)
 
@@ -2466,8 +2333,6 @@ def get_analisi_competitor(comune_id: str):
 
 @app.post("/analisi-competitor")
 def crea_osservazione_competitor(payload: dict):
-    """Aggiunge una nuova osservazione qualitativa al diario competitor,
-    senza sovrascrivere le precedenti, per costruire uno storico nel tempo."""
     try:
         comune_id_str = payload.get("comune_id")
         testo = payload.get("testo")
@@ -2492,8 +2357,6 @@ def crea_osservazione_competitor(payload: dict):
 
 @app.delete("/analisi-competitor/{osservazione_id}")
 def elimina_osservazione_competitor(osservazione_id: int):
-    """Elimina una singola osservazione dal diario, per correggere
-    eventuali errori di inserimento senza dover ricreare tutto lo storico."""
     try:
         supabase.table("analisi_competitor").delete().eq("id", osservazione_id).execute()
         return {"status": "eliminato"}
@@ -2504,7 +2367,7 @@ def elimina_osservazione_competitor(osservazione_id: int):
 # PIANO STRATEGICO — SEZIONE 2: VISIONI E CICLO DI VITA
 # ============================================================
 
-SOGLIA_GIORNI_MIN_FASE_LATO = 15  # ogni finestra (su 3 consecutive) deve avere almeno questi giorni
+SOGLIA_GIORNI_MIN_FASE_LATO = 15
 SOGLIA_CRESCITA_ALTA_PCT = 15.0
 SOGLIA_CRESCITA_NEGATIVA_PCT = -5.0
 
@@ -2533,11 +2396,6 @@ FASI_BUTLER = [
 
 
 def calcola_finestra_ciclo_vita(prima_data, oggi):
-    """Calcola la dimensione di una finestra di confronto, su 3 finestre
-    consecutive, in base allo storico realmente disponibile. Sotto la soglia
-    minima per lato, restituisce None: con meno di 3 finestre minime di dati
-    non è statisticamente onesto provare a determinare una fase del ciclo
-    di vita."""
     giorni_totali = (oggi - prima_data).days
     giorni_finestra = giorni_totali // 3
     if giorni_finestra < SOGLIA_GIORNI_MIN_FASE_LATO:
@@ -2546,8 +2404,6 @@ def calcola_finestra_ciclo_vita(prima_data, oggi):
 
 
 def classifica_fase_butler(crescita_recente_pct, in_accelerazione):
-    """Applica la matrice di classificazione: livello di crescita recente
-    incrociato con la direzione (accelerazione vs decelerazione/stabile)."""
     if crescita_recente_pct < SOGLIA_CRESCITA_NEGATIVA_PCT:
         return "declino"
     if crescita_recente_pct >= SOGLIA_CRESCITA_ALTA_PCT:
@@ -2557,12 +2413,6 @@ def classifica_fase_butler(crescita_recente_pct, in_accelerazione):
 
 @app.get("/ciclo-vita-destinazione/{comune_id}")
 def get_ciclo_vita_destinazione(comune_id: str):
-    """Posiziona la destinazione su una fase semplificata del modello del
-    ciclo di vita turistico di Butler, basandosi esclusivamente sul tasso di
-    crescita reale delle presenze su 3 finestre temporali consecutive
-    (accelerazione, decelerazione, o declino). Richiede uno storico minimo
-    per essere statisticamente onesto: sotto soglia, segnala chiaramente
-    che la fase non può ancora essere determinata."""
     try:
         siti = ottieni_siti_comune(comune_id)
         if not siti:
@@ -2599,9 +2449,9 @@ def get_ciclo_vita_destinazione(comune_id: str):
         confine_2 = oggi - timedelta(days=giorni_finestra * 2)
         confine_3 = oggi - timedelta(days=giorni_finestra * 3)
 
-        totale_p1 = 0  # più vecchio
+        totale_p1 = 0
         totale_p2 = 0
-        totale_p3 = 0  # più recente
+        totale_p3 = 0
         for p in presenze:
             data_p = pd.to_datetime(p["data"])
             gruppo = p.get("gruppo", 0) or 0
@@ -2652,11 +2502,6 @@ def get_ciclo_vita_destinazione(comune_id: str):
 
 @app.get("/dimensione-economica/{comune_id}")
 def get_dimensione_economica(comune_id: str):
-    """Calcola il valore economico storico reale generato per il territorio
-    negli ultimi 12 mesi (o quanto disponibile), riusando la stessa logica
-    di composizione del pubblico e coefficienti di spesa già impiegata in
-    previsioni_economiche, applicata però a presenze realmente avvenute
-    invece che a previsioni future."""
     try:
         siti = ottieni_siti_comune(comune_id)
         if not siti:
@@ -2738,11 +2583,6 @@ def get_dimensione_economica(comune_id: str):
 
 @app.get("/dimensione-sociale/{comune_id}")
 def get_dimensione_sociale(comune_id: str):
-    """Calcola la distribuzione del sentiment estratto dalle richieste PIT
-    del comune, considerando solo le richieste già classificate (la
-    classificazione resta on-demand, per non generare costi di chiamate AI
-    non richieste), segnalando sempre quante richieste non hanno ancora
-    un sentiment assegnato."""
     try:
         richieste_resp = supabase.table("richieste_pit").select("sentiment").eq("comune_id", comune_id).execute()
         richieste = richieste_resp.data or []
@@ -2831,9 +2671,6 @@ VOCAZIONI_TURISTICHE = [
 
 @app.get("/identikit-destinazione/{comune_id}")
 def get_identikit_destinazione(comune_id: str):
-    """Recupera l'identikit della destinazione (vocazione attuale e
-    desiderata, scelte manualmente dal comune) e l'elenco completo delle
-    vocazioni turistiche disponibili per la selezione."""
     try:
         piano = ottieni_o_crea_piano_attivo(comune_id)
 
@@ -2854,10 +2691,6 @@ def get_identikit_destinazione(comune_id: str):
 
 @app.put("/identikit-destinazione")
 def aggiorna_identikit_destinazione(payload: dict):
-    """Salva o aggiorna l'identikit della destinazione per il piano attivo
-    del comune. Una sola riga per piano: la nuova scelta sostituisce
-    sempre la precedente. Vocazione attuale e desiderata sono liste,
-    per permettere di selezionare più vocazioni contemporaneamente."""
     try:
         comune_id_str = payload.get("comune_id")
         if not comune_id_str:
@@ -2896,9 +2729,6 @@ def aggiorna_identikit_destinazione(payload: dict):
 # ============================================================
 
 def esegui_snapshot_indicatori(comune_id):
-    """Calcola gli indicatori standard correnti per un comune e li salva
-    come snapshot permanente in indicatori_storico. Funzione interna
-    riutilizzata sia dall'endpoint singolo che da quello su tutti i comuni."""
     indicatori = get_indicatori_standard(comune_id)
     if "errore" in indicatori:
         return {"errore": indicatori["errore"], "comune_id": comune_id}
@@ -2925,9 +2755,6 @@ def esegui_snapshot_indicatori(comune_id):
 
 @app.get("/indicatori-storico/{comune_id}")
 def get_indicatori_storico(comune_id: str):
-    """Recupera lo storico degli snapshot mensili degli indicatori standard
-    per un comune, dal più vecchio al più recente, per costruire un grafico
-    dell'evoluzione nel tempo."""
     try:
         piano = ottieni_o_crea_piano_attivo(comune_id)
 
@@ -2948,7 +2775,6 @@ def get_indicatori_storico(comune_id: str):
 
 @app.post("/indicatori-storico/{comune_id}/salva-snapshot")
 def salva_snapshot_indicatori(comune_id: str):
-    """Salva uno snapshot manuale degli indicatori standard correnti."""
     try:
         return esegui_snapshot_indicatori(comune_id)
     except Exception as e:
@@ -2958,9 +2784,6 @@ def salva_snapshot_indicatori(comune_id: str):
 
 @app.post("/indicatori-storico/salva-snapshot-tutti")
 def salva_snapshot_indicatori_tutti():
-    """Salva lo snapshot degli indicatori standard per tutti i comuni che
-    hanno un piano strategico attivo. Pensato per essere richiamato da un
-    cron job mensile, analogamente allo snapshot SWOT."""
     try:
         piani_resp = supabase.table("piani_strategici").select("comune_id").neq("stato", "archiviato").execute()
         comuni = list({p["comune_id"] for p in (piani_resp.data or [])})
@@ -2987,9 +2810,6 @@ SOGLIA_CONCENTRAZIONE_ALTA = 150.0
 
 
 def livello_concentrazione_weekend(indice_pct):
-    """Classifica l'indice di concentrazione weekend in una fascia di
-    rischio di overtourism, confrontando la media di affluenza nei weekend
-    con quella nei giorni feriali sullo stesso periodo."""
     if indice_pct < SOGLIA_CONCENTRAZIONE_BASSA:
         return "basso"
     elif indice_pct < SOGLIA_CONCENTRAZIONE_MODERATA:
@@ -3002,10 +2822,6 @@ def livello_concentrazione_weekend(indice_pct):
 
 @app.get("/sostenibilita-carico/{comune_id}")
 def get_sostenibilita_carico(comune_id: str):
-    """Calcola l'indice di concentrazione weekend (sovraffollamento) sugli
-    ultimi 90 giorni di presenze reali, confrontando la media weekend con
-    la media dei giorni feriali, per intercettare segnali di overtourism
-    prima che diventi un problema strutturale."""
     try:
         siti = ottieni_siti_comune(comune_id)
         if not siti:
@@ -3066,9 +2882,6 @@ def get_sostenibilita_carico(comune_id: str):
 
 @app.get("/accessibilita-pilastro/{comune_id}")
 def get_accessibilita_pilastro(comune_id: str):
-    """Calcola la percentuale di segnalazioni di disservizio relative
-    all'accessibilità sul totale dei disservizi PIT registrati, con il
-    trend mensile per vedere se la situazione sta migliorando o peggiorando."""
     try:
         richieste_resp = supabase.table("richieste_pit").select("data, categorie_disservizio").eq("comune_id", comune_id).execute()
         richieste = richieste_resp.data or []
@@ -3421,4 +3234,278 @@ def elimina_obiettivo_piano(obiettivo_id: int):
         return {"status": "disattivato"}
     except Exception as e:
         print(f"Errore eliminazione obiettivo piano {obiettivo_id}: {e}")
+        return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO — SEZIONE 4: PATRIMONIO E RISORSE DEL TERRITORIO
+# ============================================================
+
+CATEGORIE_RISORSE_TERRITORIALI = {
+    "Collocazione geografica": [
+        "Collegamenti con l'esterno", "Numero e rotte dei vettori", "Inserimento nei circuiti turistici nazionali",
+        "Inserimento nei circuiti turistici internazionali", "Zona di interscambio di merci e servizi",
+        "Zona in espansione nella prospettiva di integrazione",
+    ],
+    "Infrastrutture": [
+        "Dotazione infrastrutturale", "Punte di eccellenza e casi di mediocrità", "Modernizzazione del sistema",
+        "Competitività complessiva del territorio", "Piano generale di assetto e coordinamento delle infrastrutture di servizio",
+        "Pianificazione degli interventi e attribuzione specializzata di compiti con economie di scala",
+        "Distribuzione idrica", "Smaltimento e riciclaggio dei rifiuti",
+    ],
+    "Accesso al territorio": [
+        "Agenzie di viaggio nel luogo di partenza/arrivo dei turisti", "Sistemi e punti informazione",
+        "Sistemi segnaletici", "Sistemi di flusso di traffico facilitato", "Parcheggi per auto e pullman",
+    ],
+    "Ristorazione": [
+        "Ristoranti", "Trattorie", "Pizzerie", "Caffè", "Bar", "Self service", "Birrerie",
+        "Gastronomia basata sulla cucina e sui prodotti del territorio",
+    ],
+    "Alloggi": [
+        "Natura", "Dimensione", "Densità", "Categoria", "Ruolo dei consumatori di spazio",
+        "Categoria individuale", "Categoria familiare", "Categoria collettiva", "Categoria commerciale",
+        "Categoria non commerciale",
+    ],
+    "Turismo": [
+        "Vocazione turistica più datata e conosciuta anche all'estero", "Elementi che esprimono i livelli di vocazione turistica",
+        "Composizione del sistema ricettivo", "Zone di interesse del sistema ricettivo",
+        "Forme ed esito di proiezione del turismo all'esterno", "Articolazione della domanda turistica",
+        "Richieste di servizi alternativi alla pura vacanza", "Azioni da parte dei turisti", "Shopping",
+    ],
+    "Soggetti e attori": [
+        "Soggetti decisionali che gestiscono l'offerta", "Soggetti operativi", "Residenti", "Turisti", "Tipologia",
+        "Motivazioni della presenza nella zona", "Caratteri socio-economici del target", "Valutazioni su carenze o disfunzioni",
+        "Conoscenza della zona", "Apprezzamento della zona", "Stimoli degli input comunicativi",
+    ],
+    "Attrattive dell'ambiente naturale": [
+        "Caratteristiche proprie dell'ambiente naturale", "Spiagge", "Rocce", "Grotte", "Fiumi e laghi", "Foreste",
+        "Flora e fauna",
+    ],
+    "Edifici di forte richiamo non specificamente turistici": [
+        "Chiese e cattedrali", "Dimore signorili e palazzi storici", "Siti archeologici",
+        "Siti di archeologia industriale", "Ferrovie a vapore", "Miniere",
+    ],
+    "Strutture create per attirare visitatori": [
+        "Parchi divertimento", "Musei all'aria aperta", "Casinò", "Terme", "Aree pic-nic", "Fiere",
+        "Stabilimenti balneari",
+    ],
+    "Avvenimenti particolari": [
+        "Eventi sportivi", "Festival artistici", "Fiere e mercati", "Eventi folcloristici", "Anniversari storici",
+        "Eventi religiosi",
+    ],
+    "Rilevanza delle risorse ambientali, storiche e culturali": [
+        "Morfologia del territorio", "Presenza di località e centri storici d'interesse",
+        "Caratteristiche socio-culturali dei comuni e dei centri storici",
+        "Dinamiche e caratterizzazioni socio-economiche e motivazionali", "Presenza di parchi ed aree protette",
+        "Tutela ambientale", "Sistema di aree e parchi naturali attrezzati e strutturati",
+        "Utilizzo del patrimonio ambientale in termini di reddito e occupazione",
+    ],
+    "Elementi naturali": [
+        "Elementi topografici, idrici ed aerei", "Flora e fauna", "Topografia dei luoghi (percezione dei paesaggi)",
+        "Natura delle rocce", "Altezza e pendenza degli spazi", "Profondità topografiche per la speleologia (grotte attrezzate)",
+        "Coste come confine tra terra e mare (isole, baie, capi, strade panoramiche)", "Mare balneabile",
+        "Grandi laghi", "Laghi vulcanici o laghetti alpini", "Corsi d'acqua per turismo fluviale e pesca sportiva",
+        "Fonti termali", "Piogge", "Neve", "Quantità e ritmo delle precipitazioni", "Persistenza del manto nevoso",
+        "Ghiaccio (sci estivo sui ghiacciai, pattinaggio)", "Temperatura dell'aria", "Variazioni termiche e igrometriche",
+        "Nicchie di microclima", "Vento", "Vegetazione naturale", "Vegetazione coltivata", "Fauna",
+        "Spazi di osservazione della fauna", "Riserve ornitologiche", "Parchi nazionali e naturali",
+    ],
+    "Patrimonio artificiale": [
+        "Elementi del patrimonio storico-culturale incorporati nel prodotto territorio", "Parte artistica della città",
+        "Quartieri", "Villaggi protetti e classificati", "Monumenti civili e religiosi (intatti o in rovina)",
+        "Musei di belle arti", "Musei di scienza e tecnica", "Musei di arti e tradizioni popolari", "Eco-musei",
+    ],
+    "Patrimonio storico con funzione originaria conservata": [
+        "Cittadelle militari visitabili in giornate determinate", "Chiese e cattedrali non visitabili durante le funzioni",
+        "Villaggi o quartieri urbani abitati dai residenti senza rapporti con il turismo",
+    ],
+    "Patrimonio storico-culturale non costruito (immateriale)": [
+        "Cultura locale", "Lingua", "Costume", "Gastronomia", "Folclore", "Feste", "Cultura materiale",
+    ],
+    "Elementi creati per piacere e svago": [
+        "Casinò", "Teatri e sale da concerti delle stazioni termali o balneari",
+    ],
+    "Impianti sportivi": [
+        "Golf", "Ippodromi", "Impianti di risalita", "Sentieri attrezzati", "Complessi sportivi",
+        "Grandi stadi multifunzionali",
+    ],
+    "Impianti per turismo d'affari e congressuale": [
+        "Saloni", "Fiere", "Parchi d'esposizione", "Palazzi per congressi", "Parchi di attrazione", "Spettacoli",
+        "Eventi", "Avvenimenti", "Operazioni di rinnovamento urbano finalizzate allo sviluppo turistico",
+        "Quartieri conservati e restaurati", "Zone pedonali",
+    ],
+    "Servizi alle imprese e infrastrutture di ricerca": [
+        "Trasferimento di innovazione alle imprese", "Sviluppo e dinamica dei servizi privati e alle imprese",
+        "Proiezione turistica e vocazione nel terziario",
+    ],
+    "Imprese": [
+        "Diversificazione produttiva", "Integrazione intersettoriale per la crescita simultanea delle componenti",
+        "Potenzialità professionali delle risorse umane presenti nel territorio", "Opportunità offerte dai mercati",
+        "Dimensioni delle imprese", "Segmenti di mercato", "Possibilità di sviluppo e fasi di espansione",
+        "Ruolo della grande impresa industriale", "Formazione sul campo di una cultura imprenditoriale",
+        "Formazione sul campo di una cultura tecnica diffusa", "Settori proiettati sull'estero",
+        "Potenzialità dei settori", "Presenza dei distretti industriali riconosciuti",
+        "Grado di iniziativa dell'artigianato",
+    ],
+    "Dinamica imprenditoriale": [
+        "Espansione numerica delle imprese attive", "Natalità/mortalità delle imprese",
+        "Condizioni per l'affermazione delle imprese", "Sbocchi sui mercati esterni",
+    ],
+    "Propensione all'export e sistema di marketing": [
+        "Propensione all'export di prodotti locali", "Sistema di marketing", "Apertura sull'estero per l'export di prodotti",
+        "Rilevanza e notorietà della zona e collocamento dei suoi prodotti tipici",
+        "Rispondenza delle produzioni in quantità e qualità alle esigenze dei canali distributivi",
+        "Attivazione di iniziative di marketing mirate",
+    ],
+    "Rischiosità del credito": [
+        "Livello di rischiosità del credito", "Grado di rischiosità degli impieghi bancari",
+        "Crescita degli impieghi bancari", "Conoscenze dei settori delle banche",
+        "Valutazioni creditizie e finanziarie",
+    ],
+    "Enti locali": [
+        "Coordinamento tra gli enti locali", "Utilizzo del metodo di programmazione negoziata",
+        "Partecipazione comune tra enti locali, imprenditori e sindacati su progetti di sviluppo condivisi",
+    ],
+}
+
+
+def leggi_risorse_automatiche(comune_id):
+    risorse = []
+
+    dimensione = get_dimensione_economica(comune_id)
+    if "errore" not in dimensione:
+        risorse.append({
+            "id": None,
+            "categoria": "Turismo",
+            "sotto_voce": "Composizione del sistema ricettivo",
+            "nome": "Siti culturali gestiti (valore generato)",
+            "valore_economico_euro": dimensione["valore_totale_generato"],
+            "punteggio_valore_sociale": None,
+            "tipo_valore": "dati_gestur",
+            "fonte": "Calcolato da presenze reali e tariffe dei siti (ultimi 12 mesi)",
+            "note": dimensione["dato_sottostante"],
+        })
+
+    revenue_eventi = revenue_forecasting_eventi(comune_id=comune_id)
+    if "errore" not in revenue_eventi and revenue_eventi.get("valore_confermato", 0) > 0:
+        risorse.append({
+            "id": None,
+            "categoria": "Avvenimenti particolari",
+            "sotto_voce": None,
+            "nome": "Eventi locali confermati (valore generato)",
+            "valore_economico_euro": revenue_eventi["valore_confermato"],
+            "punteggio_valore_sociale": None,
+            "tipo_valore": "dati_gestur",
+            "fonte": f"Margine netto di {revenue_eventi['n_richieste_confermate']} eventi confermati",
+            "note": f"{revenue_eventi['n_richieste_confermate']} eventi confermati, margine netto totale di euro {revenue_eventi['valore_confermato']:.0f}",
+        })
+
+    return risorse
+
+
+@app.get("/risorse-territoriali/{comune_id}")
+def get_risorse_territoriali(comune_id: str):
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+
+        risorse_manuali_resp = supabase.table("risorse_territoriali").select("*") \
+            .eq("piano_id", piano["id"]).order("inserito_il", desc=True).execute()
+        risorse_manuali = risorse_manuali_resp.data or []
+        for r in risorse_manuali:
+            r["tipo_valore"] = "stima_manuale"
+
+        risorse_auto = leggi_risorse_automatiche(comune_id)
+
+        tutte_le_risorse = risorse_auto + risorse_manuali
+
+        valori_economici = [r["valore_economico_euro"] for r in tutte_le_risorse if r.get("valore_economico_euro") is not None]
+        valore_economico_totale = round(sum(valori_economici), 2) if valori_economici else None
+
+        punteggi_sociali = [r["punteggio_valore_sociale"] for r in tutte_le_risorse if r.get("punteggio_valore_sociale") is not None]
+        punteggio_sociale_medio = round(sum(punteggi_sociali) / len(punteggi_sociali), 1) if punteggi_sociali else None
+
+        distribuzione_categoria = {}
+        for r in tutte_le_risorse:
+            cat = r["categoria"]
+            if cat not in distribuzione_categoria:
+                distribuzione_categoria[cat] = {"n_risorse": 0, "valore_economico": 0}
+            distribuzione_categoria[cat]["n_risorse"] += 1
+            if r.get("valore_economico_euro") is not None:
+                distribuzione_categoria[cat]["valore_economico"] += r["valore_economico_euro"]
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "risorse": tutte_le_risorse,
+            "n_risorse_totali": len(tutte_le_risorse),
+            "n_risorse_automatiche": len(risorse_auto),
+            "n_risorse_manuali": len(risorse_manuali),
+            "valore_economico_totale": valore_economico_totale,
+            "punteggio_sociale_medio": punteggio_sociale_medio,
+            "distribuzione_categoria": distribuzione_categoria,
+            "categorie_disponibili": CATEGORIE_RISORSE_TERRITORIALI,
+            "nota_metodologica": (
+                "Le risorse etichettate \"dati GesTur\" derivano da calcoli su presenze e ricavi reali gia "
+                "presenti nel sistema (dimensione economica e modulo Eventi). Le risorse etichettate \"stima "
+                "comune\" sono inserite manualmente dall'amministrazione, con riferimento alla griglia standard "
+                "di analisi del territorio: il valore economico e facoltativo e il punteggio di valore sociale "
+                "e una valutazione qualitativa da 1 a 5 del potenziale identitario e attrattivo della risorsa, "
+                "non un dato misurato."
+            )
+        }
+    except Exception as e:
+        print(f"Errore risorse territoriali comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/risorse-territoriali")
+def crea_risorsa_territoriale(payload: dict):
+    try:
+        comune_id_str = payload.get("comune_id")
+        categoria = payload.get("categoria")
+        sotto_voce = payload.get("sotto_voce")
+        nome = payload.get("nome")
+        valore_economico_euro = payload.get("valore_economico_euro")
+        punteggio_valore_sociale = payload.get("punteggio_valore_sociale")
+        fonte = payload.get("fonte")
+        note = payload.get("note")
+
+        if not comune_id_str or not categoria or not nome:
+            return {"errore": "comune_id, categoria e nome sono obbligatori"}
+
+        if categoria not in CATEGORIE_RISORSE_TERRITORIALI:
+            return {"errore": "Categoria non valida"}
+
+        if sotto_voce and sotto_voce not in CATEGORIE_RISORSE_TERRITORIALI[categoria]:
+            return {"errore": "Sotto-voce non valida per questa categoria"}
+
+        if punteggio_valore_sociale is not None and punteggio_valore_sociale not in (1, 2, 3, 4, 5):
+            return {"errore": "Il punteggio di valore sociale deve essere un numero intero tra 1 e 5"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        record = {
+            "piano_id": piano["id"],
+            "comune_id": comune_id_str,
+            "categoria": categoria,
+            "sotto_voce": sotto_voce,
+            "nome": nome,
+            "valore_economico_euro": valore_economico_euro,
+            "punteggio_valore_sociale": punteggio_valore_sociale,
+            "fonte": fonte,
+            "note": note,
+        }
+        creato_resp = supabase.table("risorse_territoriali").insert(record).execute()
+
+        return {"status": "salvato", "risorsa": creato_resp.data[0] if creato_resp.data else None}
+    except Exception as e:
+        print(f"Errore creazione risorsa territoriale: {e}")
+        return {"errore": str(e)}
+
+
+@app.delete("/risorse-territoriali/{risorsa_id}")
+def elimina_risorsa_territoriale(risorsa_id: int):
+    try:
+        supabase.table("risorse_territoriali").delete().eq("id", risorsa_id).execute()
+        return {"status": "eliminato"}
+    except Exception as e:
+        print(f"Errore eliminazione risorsa territoriale {risorsa_id}: {e}")
         return {"errore": str(e)}
