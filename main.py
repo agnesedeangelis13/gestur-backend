@@ -3379,6 +3379,7 @@ def leggi_risorse_automatiche(comune_id):
             "nome": "Siti culturali gestiti (valore generato)",
             "valore_economico_euro": dimensione["valore_totale_generato"],
             "punteggio_valore_sociale": None,
+            "punteggio_valore_naturale": None,
             "tipo_valore": "dati_gestur",
             "fonte": "Calcolato da presenze reali e tariffe dei siti (ultimi 12 mesi)",
             "note": dimensione["dato_sottostante"],
@@ -3393,6 +3394,7 @@ def leggi_risorse_automatiche(comune_id):
             "nome": "Eventi locali confermati (valore generato)",
             "valore_economico_euro": revenue_eventi["valore_confermato"],
             "punteggio_valore_sociale": None,
+            "punteggio_valore_naturale": None,
             "tipo_valore": "dati_gestur",
             "fonte": f"Margine netto di {revenue_eventi['n_richieste_confermate']} eventi confermati",
             "note": f"{revenue_eventi['n_richieste_confermate']} eventi confermati, margine netto totale di euro {revenue_eventi['valore_confermato']:.0f}",
@@ -3422,14 +3424,44 @@ def get_risorse_territoriali(comune_id: str):
         punteggi_sociali = [r["punteggio_valore_sociale"] for r in tutte_le_risorse if r.get("punteggio_valore_sociale") is not None]
         punteggio_sociale_medio = round(sum(punteggi_sociali) / len(punteggi_sociali), 1) if punteggi_sociali else None
 
+        punteggi_naturali = [r["punteggio_valore_naturale"] for r in tutte_le_risorse if r.get("punteggio_valore_naturale") is not None]
+        punteggio_naturale_medio = round(sum(punteggi_naturali) / len(punteggi_naturali), 1) if punteggi_naturali else None
+
         distribuzione_categoria = {}
         for r in tutte_le_risorse:
             cat = r["categoria"]
             if cat not in distribuzione_categoria:
-                distribuzione_categoria[cat] = {"n_risorse": 0, "valore_economico": 0}
+                distribuzione_categoria[cat] = {
+                    "n_risorse": 0,
+                    "valore_economico": 0,
+                    "punteggi_sociali": [],
+                    "punteggi_naturali": [],
+                }
             distribuzione_categoria[cat]["n_risorse"] += 1
             if r.get("valore_economico_euro") is not None:
                 distribuzione_categoria[cat]["valore_economico"] += r["valore_economico_euro"]
+            if r.get("punteggio_valore_sociale") is not None:
+                distribuzione_categoria[cat]["punteggi_sociali"].append(r["punteggio_valore_sociale"])
+            if r.get("punteggio_valore_naturale") is not None:
+                distribuzione_categoria[cat]["punteggi_naturali"].append(r["punteggio_valore_naturale"])
+
+        distribuzione_economica = [
+            {"categoria": cat, "valore_economico": round(d["valore_economico"], 2)}
+            for cat, d in distribuzione_categoria.items() if d["valore_economico"] > 0
+        ]
+        distribuzione_economica.sort(key=lambda x: x["valore_economico"], reverse=True)
+
+        distribuzione_sociale = [
+            {"categoria": cat, "punteggio_medio": round(sum(d["punteggi_sociali"]) / len(d["punteggi_sociali"]), 1), "n_valutazioni": len(d["punteggi_sociali"])}
+            for cat, d in distribuzione_categoria.items() if d["punteggi_sociali"]
+        ]
+        distribuzione_sociale.sort(key=lambda x: x["punteggio_medio"], reverse=True)
+
+        distribuzione_naturale = [
+            {"categoria": cat, "punteggio_medio": round(sum(d["punteggi_naturali"]) / len(d["punteggi_naturali"]), 1), "n_valutazioni": len(d["punteggi_naturali"])}
+            for cat, d in distribuzione_categoria.items() if d["punteggi_naturali"]
+        ]
+        distribuzione_naturale.sort(key=lambda x: x["punteggio_medio"], reverse=True)
 
         return {
             "piano_id": piano["id"],
@@ -3440,15 +3472,20 @@ def get_risorse_territoriali(comune_id: str):
             "n_risorse_manuali": len(risorse_manuali),
             "valore_economico_totale": valore_economico_totale,
             "punteggio_sociale_medio": punteggio_sociale_medio,
-            "distribuzione_categoria": distribuzione_categoria,
+            "punteggio_naturale_medio": punteggio_naturale_medio,
+            "distribuzione_economica_categoria": distribuzione_economica,
+            "distribuzione_sociale_categoria": distribuzione_sociale,
+            "distribuzione_naturale_categoria": distribuzione_naturale,
             "categorie_disponibili": CATEGORIE_RISORSE_TERRITORIALI,
             "nota_metodologica": (
                 "Le risorse etichettate \"dati GesTur\" derivano da calcoli su presenze e ricavi reali gia "
                 "presenti nel sistema (dimensione economica e modulo Eventi). Le risorse etichettate \"stima "
                 "comune\" sono inserite manualmente dall'amministrazione, con riferimento alla griglia standard "
-                "di analisi del territorio: il valore economico e facoltativo e il punteggio di valore sociale "
-                "e una valutazione qualitativa da 1 a 5 del potenziale identitario e attrattivo della risorsa, "
-                "non un dato misurato."
+                "di analisi del territorio: il valore economico e facoltativo, mentre il punteggio di valore "
+                "sociale e quello di valore naturale sono valutazioni qualitative da 1 a 5 (rispettivamente sul "
+                "potenziale identitario/attrattivo e sul pregio ambientale/naturalistico della risorsa), non dati "
+                "misurati. Le tre dimensioni non vengono mai sommate tra loro perche esprimono unita di misura "
+                "diverse ed eterogenee."
             )
         }
     except Exception as e:
@@ -3465,6 +3502,7 @@ def crea_risorsa_territoriale(payload: dict):
         nome = payload.get("nome")
         valore_economico_euro = payload.get("valore_economico_euro")
         punteggio_valore_sociale = payload.get("punteggio_valore_sociale")
+        punteggio_valore_naturale = payload.get("punteggio_valore_naturale")
         fonte = payload.get("fonte")
         note = payload.get("note")
 
@@ -3480,6 +3518,9 @@ def crea_risorsa_territoriale(payload: dict):
         if punteggio_valore_sociale is not None and punteggio_valore_sociale not in (1, 2, 3, 4, 5):
             return {"errore": "Il punteggio di valore sociale deve essere un numero intero tra 1 e 5"}
 
+        if punteggio_valore_naturale is not None and punteggio_valore_naturale not in (1, 2, 3, 4, 5):
+            return {"errore": "Il punteggio di valore naturale deve essere un numero intero tra 1 e 5"}
+
         piano = ottieni_o_crea_piano_attivo(comune_id_str)
 
         record = {
@@ -3490,6 +3531,7 @@ def crea_risorsa_territoriale(payload: dict):
             "nome": nome,
             "valore_economico_euro": valore_economico_euro,
             "punteggio_valore_sociale": punteggio_valore_sociale,
+            "punteggio_valore_naturale": punteggio_valore_naturale,
             "fonte": fonte,
             "note": note,
         }
