@@ -3551,3 +3551,623 @@ def elimina_risorsa_territoriale(risorsa_id: int):
     except Exception as e:
         print(f"Errore eliminazione risorsa territoriale {risorsa_id}: {e}")
         return {"errore": str(e)}
+# ============================================================
+# PIANO STRATEGICO — SEZIONE 4: PIANO DI MARKETING (Marketing Mix territoriale)
+# ============================================================
+
+def ottieni_o_crea_impostazione_marketing(comune_id_str, piano_id):
+    esistente_resp = supabase.table("piano_marketing_impostazione").select("*") \
+        .eq("piano_id", piano_id).limit(1).execute()
+    if esistente_resp.data:
+        return esistente_resp.data[0]
+    nuovo = {
+        "piano_id": piano_id,
+        "comune_id": comune_id_str,
+        "tipo_piano": None,
+        "data_inizio": None,
+        "data_fine": None,
+        "punto_partenza": None,
+        "obiettivi_mercato": None,
+        "strategie_tattiche": None,
+        "monitoraggio": None,
+    }
+    creato_resp = supabase.table("piano_marketing_impostazione").insert(nuovo).execute()
+    return creato_resp.data[0]
+
+
+@app.get("/piano-marketing/{comune_id}")
+def get_piano_marketing(comune_id: str):
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+        impostazione = ottieni_o_crea_impostazione_marketing(comune_id, piano["id"])
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "impostazione": impostazione,
+        }
+    except Exception as e:
+        print(f"Errore piano marketing comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.put("/piano-marketing")
+def aggiorna_piano_marketing(payload: dict):
+    try:
+        comune_id_str = payload.get("comune_id")
+        if not comune_id_str:
+            return {"errore": "comune_id è obbligatorio"}
+
+        tipo_piano = payload.get("tipo_piano")
+        if tipo_piano is not None and tipo_piano not in ("strategico", "tattico"):
+            return {"errore": "tipo_piano deve essere 'strategico' o 'tattico'"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        campi_consentiti = {"tipo_piano", "data_inizio", "data_fine", "punto_partenza", "obiettivi_mercato", "strategie_tattiche", "monitoraggio"}
+        aggiornamento = {k: v for k, v in payload.items() if k in campi_consentiti}
+        aggiornamento["piano_id"] = piano["id"]
+        aggiornamento["comune_id"] = comune_id_str
+        aggiornamento["aggiornato_il"] = datetime.now().isoformat()
+
+        supabase.table("piano_marketing_impostazione").upsert(aggiornamento, on_conflict="piano_id").execute()
+
+        return {"status": "salvato", "piano_id": piano["id"]}
+    except Exception as e:
+        print(f"Errore aggiornamento piano marketing: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/marketing-mix-prodotto/{comune_id}")
+def get_marketing_mix_prodotto(comune_id: str):
+    """Riepilogo di sintesi che RICHIAMA dati già calcolati altrove (Patrimonio e Risorse,
+    Identikit destinazione, Ciclo di vita) invece di ricalcolarli, per evitare duplicazioni
+    concettuali tra Sezione 2/4 e il Piano di Marketing."""
+    try:
+        risorse = get_risorse_territoriali(comune_id)
+        identikit = get_identikit_destinazione(comune_id)
+        ciclo_vita = get_ciclo_vita_destinazione(comune_id)
+
+        return {
+            "comune_id": comune_id,
+            "risorse_riepilogo": {
+                "n_risorse_totali": risorse.get("n_risorse_totali"),
+                "valore_economico_totale": risorse.get("valore_economico_totale"),
+                "punteggio_sociale_medio": risorse.get("punteggio_sociale_medio"),
+                "punteggio_naturale_medio": risorse.get("punteggio_naturale_medio"),
+            } if "errore" not in risorse else None,
+            "identikit_riepilogo": {
+                "vocazione_attuale": identikit.get("identikit", {}).get("vocazione_attuale") if identikit.get("identikit") else None,
+                "vocazione_desiderata": identikit.get("identikit", {}).get("vocazione_desiderata") if identikit.get("identikit") else None,
+            } if "errore" not in identikit else None,
+            "ciclo_vita_riepilogo": {
+                "fase_attuale": ciclo_vita.get("fase_attuale", {}).get("nome") if ciclo_vita.get("dati_sufficienti") else None,
+                "dati_sufficienti": ciclo_vita.get("dati_sufficienti", False),
+            } if "errore" not in ciclo_vita else None,
+            "nota_metodologica": (
+                "Questo riepilogo non ricalcola nulla: richiama i dati già presenti in \"Patrimonio e Risorse "
+                "del Territorio\" (Sezione 4) e in \"Ciclo di Vita\" e \"Identikit della Destinazione\" (Sezione 2). "
+                "Per il dettaglio completo, consulta quelle sezioni."
+            )
+        }
+    except Exception as e:
+        print(f"Errore marketing mix prodotto comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/marketing-mix-prezzo/{comune_id}")
+def get_marketing_mix_prezzo(comune_id: str):
+    try:
+        siti = ottieni_siti_comune(comune_id)
+        if not siti:
+            return {"errore": "Nessun sito culturale trovato per questo comune"}
+
+        prezzi_siti = []
+        for s in siti:
+            tariffe_resp = supabase.table("siti_culturali").select(
+                "nome_sito, prezzo_biglietto, prezzo_ridotto, percentuale_ridotti"
+            ).eq("id", s["id"]).single().execute()
+            t = tariffe_resp.data
+            if t and t.get("prezzo_biglietto") is not None:
+                prezzi_siti.append({
+                    "nome_sito": t["nome_sito"],
+                    "prezzo_intero": t["prezzo_biglietto"],
+                    "prezzo_ridotto": t.get("prezzo_ridotto"),
+                    "percentuale_ridotti": t.get("percentuale_ridotti"),
+                })
+
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+        note_resp = supabase.table("note_marketing_mix").select("*") \
+            .eq("piano_id", piano["id"]).eq("sezione", "prezzo").order("inserito_il", desc=True).execute()
+        note = note_resp.data or []
+
+        prezzo_medio_interi = round(sum(p["prezzo_intero"] for p in prezzi_siti) / len(prezzi_siti), 2) if prezzi_siti else None
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "prezzi_siti": prezzi_siti,
+            "prezzo_medio_intero": prezzo_medio_interi,
+            "note": note,
+            "nota_metodologica": (
+                "Il territorio in se non ha un prezzo di vendita diretto: qui sono riepilogati i prezzi reali "
+                "gia impostati per i singoli siti culturali (biglietteria), come riferimento oggettivo. Le note "
+                "qualitative sottostanti servono per registrare considerazioni di posizionamento (es. prezzo "
+                "percepito, confronto con territori concorrenti), che restano una valutazione del comune."
+            )
+        }
+    except Exception as e:
+        print(f"Errore marketing mix prezzo comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/note-marketing/{comune_id}")
+def get_note_marketing(comune_id: str, sezione: str):
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+        note_resp = supabase.table("note_marketing_mix").select("*") \
+            .eq("piano_id", piano["id"]).eq("sezione", sezione).order("inserito_il", desc=True).execute()
+        return {"piano_id": piano["id"], "comune_id": comune_id, "sezione": sezione, "note": note_resp.data or []}
+    except Exception as e:
+        print(f"Errore note marketing comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/note-marketing")
+def crea_nota_marketing(payload: dict):
+    try:
+        comune_id_str = payload.get("comune_id")
+        sezione = payload.get("sezione")
+        testo = payload.get("testo")
+
+        if not comune_id_str or not sezione or not testo or not testo.strip():
+            return {"errore": "comune_id, sezione e testo sono obbligatori"}
+
+        if sezione not in ("prezzo", "distribuzione_trend", "distribuzione_scenari"):
+            return {"errore": "Sezione non valida"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+        record = {"piano_id": piano["id"], "comune_id": comune_id_str, "sezione": sezione, "testo": testo.strip()}
+        creato_resp = supabase.table("note_marketing_mix").insert(record).execute()
+
+        return {"status": "salvato", "nota": creato_resp.data[0] if creato_resp.data else None}
+    except Exception as e:
+        print(f"Errore creazione nota marketing: {e}")
+        return {"errore": str(e)}
+
+
+@app.delete("/note-marketing/{nota_id}")
+def elimina_nota_marketing(nota_id: int):
+    try:
+        supabase.table("note_marketing_mix").delete().eq("id", nota_id).execute()
+        return {"status": "eliminato"}
+    except Exception as e:
+        print(f"Errore eliminazione nota marketing {nota_id}: {e}")
+        return {"errore": str(e)}
+# ============================================================
+# PIANO DI MARKETING — COMUNICAZIONE
+# (fonde qui targetizzazione, scheletro canali, alert previsionale e budget/campagne,
+# per non duplicare gli stessi concetti in moduli separati)
+# ============================================================
+
+@app.get("/targetizzazione-marketing/{comune_id}")
+def get_targetizzazione_marketing(comune_id: str):
+    try:
+        siti = ottieni_siti_comune(comune_id)
+        if not siti:
+            return {"errore": "Nessun sito culturale trovato per questo comune"}
+        sito_ids = [s["id"] for s in siti]
+
+        dodici_mesi_fa = (datetime.now() - timedelta(days=365)).strftime("%Y-%m-%d")
+        presenze_resp = supabase.table("presenza").select("gruppo, provenienza, fasce") \
+            .in_("sito_id", sito_ids).gte("data", dodici_mesi_fa).execute()
+        presenze = presenze_resp.data or []
+
+        if not presenze:
+            return {"errore": "Nessun dato di presenze disponibile negli ultimi 12 mesi per questo comune"}
+
+        totale = 0
+        conteggio_prov = {}
+        conteggio_fascia = {}
+        for r in presenze:
+            gruppo = r.get("gruppo", 0) or 0
+            totale += gruppo
+            prov_macro = mappa_provenienza_macro(r.get("provenienza"))
+            conteggio_prov[prov_macro] = conteggio_prov.get(prov_macro, 0) + gruppo
+
+            fasce_riga = [normalizza_fascia(f) for f in (r.get("fasce") or "").split(", ") if f]
+            if fasce_riga:
+                quota = gruppo / len(fasce_riga)
+                for f in fasce_riga:
+                    conteggio_fascia[f] = conteggio_fascia.get(f, 0) + quota
+
+        if totale == 0:
+            return {"errore": "Presenze insufficienti per calcolare la targetizzazione"}
+
+        top_provenienze = sorted(
+            [{"valore": k, "quota_pct": round(v / totale * 100, 1), "n_persone": round(v, 1)} for k, v in conteggio_prov.items()],
+            key=lambda x: x["quota_pct"], reverse=True
+        )[:5]
+        top_fasce = sorted(
+            [{"valore": k, "quota_pct": round(v / totale * 100, 1), "n_persone": round(v, 1)} for k, v in conteggio_fascia.items()],
+            key=lambda x: x["quota_pct"], reverse=True
+        )[:5]
+
+        return {
+            "comune_id": comune_id,
+            "periodo_giorni": 365,
+            "totale_presenze_periodo": totale,
+            "top_provenienze": top_provenienze,
+            "top_fasce": top_fasce,
+            "dato_sottostante": (
+                f"Calcolato su {totale} presenze reali degli ultimi 12 mesi su {len(siti)} sito/i. "
+                f"Provenienza dominante: {top_provenienze[0]['valore']} ({top_provenienze[0]['quota_pct']}%). "
+                f"Fascia dominante: {top_fasce[0]['valore']} anni ({top_fasce[0]['quota_pct']}%)."
+            ) if top_provenienze and top_fasce else None,
+        }
+    except Exception as e:
+        print(f"Errore targetizzazione marketing comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+SOGLIA_CALO_ALERT_MARKETING_PCT = -25.0
+
+@app.get("/alert-previsionale-marketing/{comune_id}")
+def get_alert_previsionale_marketing(comune_id: str):
+    try:
+        siti = ottieni_siti_comune(comune_id)
+        if not siti:
+            return {"errore": "Nessun sito culturale trovato per questo comune"}
+        sito_ids = [s["id"] for s in siti]
+
+        novanta_giorni_fa = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        storico_resp = supabase.table("presenza").select("data, gruppo") \
+            .in_("sito_id", sito_ids).gte("data", novanta_giorni_fa).execute()
+        storico = storico_resp.data or []
+        if not storico:
+            return {"errore": "Nessun dato storico sufficiente per calcolare una media di riferimento"}
+
+        df_storico = pd.DataFrame(storico)
+        df_storico["data"] = pd.to_datetime(df_storico["data"])
+        media_settimanale_storica = df_storico.groupby(pd.Grouper(key="data", freq="W"))["gruppo"].sum().mean()
+
+        if not media_settimanale_storica or media_settimanale_storica <= 0:
+            return {"errore": "Media storica non calcolabile per questo comune"}
+
+        oggi = datetime.now()
+        fine = oggi + timedelta(days=182)
+        prev_resp = supabase.table("previsioni_affluenza").select("sito_id, data_previsione, affluenza_stimata") \
+            .in_("sito_id", sito_ids).gte("data_previsione", oggi.strftime("%Y-%m-%d")) \
+            .lte("data_previsione", fine.strftime("%Y-%m-%d")).order("data_previsione").execute()
+        previsioni = prev_resp.data or []
+
+        if not previsioni:
+            return {
+                "comune_id": comune_id,
+                "alert_disponibili": False,
+                "messaggio": (
+                    "Nessuna previsione di affluenza a 6 mesi disponibile per questo comune. Le previsioni "
+                    "vengono generate automaticamente ogni settimana per ciascun sito: torna a controllare "
+                    "tra qualche giorno."
+                )
+            }
+
+        df_prev = pd.DataFrame(previsioni)
+        df_prev["data_previsione"] = pd.to_datetime(df_prev["data_previsione"])
+        df_prev["settimana"] = df_prev["data_previsione"].dt.to_period("W").dt.start_time
+        aggregato_settimanale = df_prev.groupby("settimana")["affluenza_stimata"].sum()
+
+        nomi_mesi = ["", "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+                     "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"]
+
+        alert = []
+        for settimana, valore in aggregato_settimanale.items():
+            scostamento_pct = round(((valore - media_settimanale_storica) / media_settimanale_storica) * 100, 1)
+            if scostamento_pct <= SOGLIA_CALO_ALERT_MARKETING_PCT:
+                alert.append({
+                    "settimana_inizio": settimana.strftime("%Y-%m-%d"),
+                    "mese": nomi_mesi[settimana.month],
+                    "affluenza_prevista": round(valore, 1),
+                    "media_riferimento": round(media_settimanale_storica, 1),
+                    "scostamento_pct": scostamento_pct,
+                    "suggerimento": (
+                        f"Calo previsto del {abs(scostamento_pct)}% rispetto alla media delle ultime 12 settimane "
+                        f"per la settimana del {settimana.strftime('%d/%m')} ({nomi_mesi[settimana.month]}). "
+                        f"Valuta di anticipare una campagna di promozione su questo periodo, eventualmente "
+                        f"allocando budget dai canali attivi in Comunicazione."
+                    )
+                })
+
+        return {
+            "comune_id": comune_id,
+            "alert_disponibili": True,
+            "media_settimanale_storica": round(media_settimanale_storica, 1),
+            "n_alert": len(alert),
+            "alert": alert,
+            "nota_metodologica": (
+                f"Un calo viene segnalato quando l'affluenza settimanale prevista scende di almeno "
+                f"{abs(SOGLIA_CALO_ALERT_MARKETING_PCT)}% sotto la media settimanale calcolata sugli ultimi 90 "
+                f"giorni di presenze reali. Le previsioni provengono dal modello SARIMAX gia usato nel modulo "
+                f"Previsioni, aggiornato automaticamente ogni settimana: non sono una garanzia, ma un supporto "
+                f"decisionale per anticipare le azioni di comunicazione."
+            )
+        }
+    except Exception as e:
+        print(f"Errore alert previsionale marketing comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+CANALI_COMUNICAZIONE_STANDARD = [
+    "Social media (Facebook/Instagram)", "Sito web istituzionale", "Newsletter ed email marketing",
+    "Radio locale", "Stampa locale", "Cartellonistica e affissioni", "Fiere ed eventi di settore",
+    "Influencer e content creator", "App turistica", "Passaparola e referral",
+    "Partnership con tour operator", "Ufficio stampa e public relations",
+]
+
+CANALI_DISTRIBUZIONE_STANDARD = [
+    "Vendita diretta in loco", "Booking online diretto", "OTA (Booking.com, Expedia, ecc.)",
+    "Tour operator e agenzie di viaggio", "DMO regionale o provinciale",
+    "Partnership con territori limitrofi", "Pacchetti bundle con eventi locali",
+]
+
+
+@app.get("/canali-marketing/{comune_id}")
+def get_canali_marketing(comune_id: str, tipo: str):
+    try:
+        if tipo not in ("comunicazione", "distribuzione"):
+            return {"errore": "tipo deve essere 'comunicazione' o 'distribuzione'"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+        canali_resp = supabase.table("canali_marketing").select("*") \
+            .eq("piano_id", piano["id"]).eq("tipo", tipo).execute()
+        canali_salvati = {c["nome"]: c for c in (canali_resp.data or [])}
+
+        elenco_standard = CANALI_COMUNICAZIONE_STANDARD if tipo == "comunicazione" else CANALI_DISTRIBUZIONE_STANDARD
+
+        canali = []
+        for nome in elenco_standard:
+            salvato = canali_salvati.get(nome)
+            canali.append({
+                "id": salvato["id"] if salvato else None,
+                "nome": nome,
+                "attivo": salvato["attivo"] if salvato else False,
+                "budget_stanziato": salvato.get("budget_stanziato") if salvato else None,
+                "note": salvato.get("note") if salvato else None,
+            })
+
+        budget_totale = sum(c["budget_stanziato"] for c in canali if c.get("budget_stanziato") is not None)
+        n_attivi = sum(1 for c in canali if c["attivo"])
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "tipo": tipo,
+            "canali": canali,
+            "n_canali_attivi": n_attivi,
+            "n_canali_totali": len(canali),
+            "budget_totale": round(budget_totale, 2) if budget_totale else None,
+        }
+    except Exception as e:
+        print(f"Errore canali marketing comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.put("/canali-marketing")
+def aggiorna_canale_marketing(payload: dict):
+    try:
+        comune_id_str = payload.get("comune_id")
+        tipo = payload.get("tipo")
+        nome = payload.get("nome")
+        attivo = payload.get("attivo")
+        budget_stanziato = payload.get("budget_stanziato")
+        note = payload.get("note")
+
+        if not comune_id_str or tipo not in ("comunicazione", "distribuzione") or not nome:
+            return {"errore": "comune_id, tipo e nome sono obbligatori"}
+
+        elenco_standard = CANALI_COMUNICAZIONE_STANDARD if tipo == "comunicazione" else CANALI_DISTRIBUZIONE_STANDARD
+        if nome not in elenco_standard:
+            return {"errore": "Canale non valido per questo tipo"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        record = {
+            "piano_id": piano["id"],
+            "comune_id": comune_id_str,
+            "tipo": tipo,
+            "nome": nome,
+            "attivo": bool(attivo),
+            "budget_stanziato": budget_stanziato,
+            "note": note,
+        }
+        supabase.table("canali_marketing").upsert(record, on_conflict="piano_id,tipo,nome").execute()
+
+        return {"status": "salvato"}
+    except Exception as e:
+        print(f"Errore aggiornamento canale marketing: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/campagne-marketing/{comune_id}")
+def get_campagne_marketing(comune_id: str):
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+        campagne_resp = supabase.table("campagne_marketing").select("*") \
+            .eq("piano_id", piano["id"]).order("data_inizio", desc=True).execute()
+        campagne = campagne_resp.data or []
+
+        budget_totale = sum(c["budget_stanziato"] for c in campagne if c.get("budget_stanziato") is not None)
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "campagne": campagne,
+            "n_campagne": len(campagne),
+            "budget_totale": round(budget_totale, 2) if budget_totale else None,
+        }
+    except Exception as e:
+        print(f"Errore campagne marketing comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/campagne-marketing")
+def crea_campagna_marketing(payload: dict):
+    try:
+        comune_id_str = payload.get("comune_id")
+        nome_campagna = payload.get("nome_campagna")
+        canale = payload.get("canale")
+        budget_stanziato = payload.get("budget_stanziato")
+        data_inizio = payload.get("data_inizio")
+        data_fine = payload.get("data_fine")
+        stato = payload.get("stato", "pianificata")
+        note = payload.get("note")
+
+        if not comune_id_str or not nome_campagna:
+            return {"errore": "comune_id e nome_campagna sono obbligatori"}
+
+        if stato not in ("pianificata", "attiva", "completata"):
+            return {"errore": "Stato non valido"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        record = {
+            "piano_id": piano["id"],
+            "comune_id": comune_id_str,
+            "nome_campagna": nome_campagna,
+            "canale": canale,
+            "budget_stanziato": budget_stanziato,
+            "data_inizio": data_inizio,
+            "data_fine": data_fine,
+            "stato": stato,
+            "note": note,
+        }
+        creato_resp = supabase.table("campagne_marketing").insert(record).execute()
+
+        return {"status": "salvato", "campagna": creato_resp.data[0] if creato_resp.data else None}
+    except Exception as e:
+        print(f"Errore creazione campagna marketing: {e}")
+        return {"errore": str(e)}
+
+
+@app.delete("/campagne-marketing/{campagna_id}")
+def elimina_campagna_marketing(campagna_id: int):
+    try:
+        supabase.table("campagne_marketing").delete().eq("id", campagna_id).execute()
+        return {"status": "eliminato"}
+    except Exception as e:
+        print(f"Errore eliminazione campagna marketing {campagna_id}: {e}")
+        return {"errore": str(e)}
+# ============================================================
+# PIANO DI MARKETING — DISTRIBUZIONE
+# ============================================================
+
+@app.get("/marketing-mix-distribuzione/{comune_id}")
+def get_marketing_mix_distribuzione(comune_id: str):
+    """Canali distributivi riusano lo stesso meccanismo dei canali di comunicazione (tipo='distribuzione').
+    Trend di consumo e scenari futuri riusano note_marketing_mix. Il portafoglio prodotti richiama
+    l'identikit destinazione gia esistente in Sezione 2, senza ricrearlo."""
+    try:
+        canali = get_canali_marketing(comune_id, tipo="distribuzione")
+
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+        note_trend_resp = supabase.table("note_marketing_mix").select("*") \
+            .eq("piano_id", piano["id"]).eq("sezione", "distribuzione_trend").order("inserito_il", desc=True).execute()
+        note_scenari_resp = supabase.table("note_marketing_mix").select("*") \
+            .eq("piano_id", piano["id"]).eq("sezione", "distribuzione_scenari").order("inserito_il", desc=True).execute()
+
+        identikit = get_identikit_destinazione(comune_id)
+        portafoglio = None
+        if "errore" not in identikit and identikit.get("identikit"):
+            portafoglio = {
+                "vocazione_attuale": identikit["identikit"].get("vocazione_attuale"),
+                "vocazione_desiderata": identikit["identikit"].get("vocazione_desiderata"),
+            }
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "canali_distributivi": canali if "errore" not in canali else None,
+            "note_trend_consumo": note_trend_resp.data or [],
+            "note_scenari_futuri": note_scenari_resp.data or [],
+            "portafoglio_prodotti": portafoglio,
+            "nota_metodologica": (
+                "Il portafoglio prodotti richiama l'identikit della destinazione gia definito in Sezione 2: "
+                "le vocazioni attuali e desiderate rappresentano le linee di prodotto del territorio su cui "
+                "valutare possibili sviluppi (nuove vocazioni da aggiungere, o rafforzamento di quelle esistenti)."
+            )
+        }
+    except Exception as e:
+        print(f"Errore marketing mix distribuzione comune {comune_id}: {e}")
+        return {"errore": str(e)}
+# ============================================================
+# PIANO DI MARKETING — PROFILO DEL VISITATORE
+# (riusa targetizzazione-marketing e indicatori-standard gia esistenti per chi/da dove/quando;
+# aggiunge solo l'aggregazione nuova su cosa cercano e cosa manca, dalle richieste PIT)
+# ============================================================
+
+@app.get("/profilo-visitatore/{comune_id}")
+def get_profilo_visitatore(comune_id: str):
+    try:
+        targetizzazione = get_targetizzazione_marketing(comune_id)
+        indicatori = get_indicatori_standard(comune_id)
+
+        richieste_resp = supabase.table("richieste_pit").select("categoria, categorie_disservizio, materiale_mancante").eq("comune_id", comune_id).execute()
+        richieste = richieste_resp.data or []
+
+        conteggio_categoria = {}
+        conteggio_disservizio = {}
+        conteggio_materiale_mancante = {}
+        for r in richieste:
+            cat = r.get("categoria")
+            if cat and cat.lower() != "altro":
+                conteggio_categoria[cat] = conteggio_categoria.get(cat, 0) + 1
+            dis = r.get("categorie_disservizio")
+            if dis and dis.lower() != "altro":
+                conteggio_disservizio[dis] = conteggio_disservizio.get(dis, 0) + 1
+            mat = (r.get("materiale_mancante") or "").strip()
+            if mat:
+                conteggio_materiale_mancante[mat] = conteggio_materiale_mancante.get(mat, 0) + 1
+
+        totale_richieste = len(richieste)
+        top_richieste = sorted(
+            [{"voce": k, "conteggio": v, "quota_pct": round(v / totale_richieste * 100, 1)} for k, v in conteggio_categoria.items()],
+            key=lambda x: x["conteggio"], reverse=True
+        )[:5]
+        top_disservizi = sorted(
+            [{"voce": k, "conteggio": v} for k, v in conteggio_disservizio.items()],
+            key=lambda x: x["conteggio"], reverse=True
+        )[:5]
+        top_materiale_mancante = sorted(
+            [{"voce": k, "conteggio": v} for k, v in conteggio_materiale_mancante.items()],
+            key=lambda x: x["conteggio"], reverse=True
+        )[:5]
+
+        return {
+            "comune_id": comune_id,
+            "chi_da_dove": {
+                "top_provenienze": targetizzazione.get("top_provenienze") if "errore" not in targetizzazione else None,
+                "top_fasce": targetizzazione.get("top_fasce") if "errore" not in targetizzazione else None,
+                "errore": targetizzazione.get("errore") if "errore" in targetizzazione else None,
+            },
+            "quando": {
+                "livello_stagionalita": indicatori.get("stagionalita", {}).get("livello") if "errore" not in indicatori else None,
+                "mese_massimo": indicatori.get("stagionalita", {}).get("mese_massimo") if "errore" not in indicatori else None,
+                "mese_minimo": indicatori.get("stagionalita", {}).get("mese_minimo") if "errore" not in indicatori else None,
+                "dati_sufficienti": indicatori.get("stagionalita", {}).get("dati_sufficienti", False) if "errore" not in indicatori else False,
+            },
+            "cosa_cercano": {
+                "totale_richieste_pit": totale_richieste,
+                "top_categorie_richieste": top_richieste,
+            } if totale_richieste > 0 else None,
+            "cosa_manca": {
+                "top_disservizi_segnalati": top_disservizi,
+                "top_materiale_mancante": top_materiale_mancante,
+            } if (top_disservizi or top_materiale_mancante) else None,
+            "nota_metodologica": (
+                "Questo profilo non raccoglie nuovi dati: aggrega presenze reali (chi/da dove/quando, stessa "
+                "fonte di Targetizzazione e Indicatori Standard) e richieste al Punto Informativo Turistico "
+                "(cosa cercano i visitatori e quali servizi/materiali mancano), gia registrate nei rispettivi moduli."
+            )
+        }
+    except Exception as e:
+        print(f"Errore profilo visitatore comune {comune_id}: {e}")
+        return {"errore": str(e)}
