@@ -148,13 +148,11 @@ async def aggiorna_tutte():
         print(f"Errore aggiorna_tutte: {e}")
         return {"errore": str(e)}
 
-# ---- METEO ----
 @app.post("/meteo/aggiorna")
 async def aggiorna_meteo():
     risultati = await aggiorna_meteo_tutti_siti()
     return {"risultati": risultati}
 
-# ---- EVENTI LOCALI ----
 @app.get("/eventi/{sito_id}")
 def get_eventi(sito_id: int):
     data = supabase.table("eventi_locali").select("*").eq("sito_id", sito_id).order("data_inizio").execute()
@@ -170,13 +168,11 @@ def elimina_evento(evento_id: int):
     supabase.table("eventi_locali").delete().eq("id", evento_id).execute()
     return {"status": "eliminato"}
 
-# ---- FESTIVITA ----
 @app.post("/festivita/popola/{anno}")
 def popola_festivita_anno(anno: int):
     n = popola_festivita(anno)
     return {"records_inseriti": n}
 
-    # ---- SIMULATORE SCENARI ----
 @app.post("/simula-scenario")
 def simula_scenario(payload: dict):
     try:
@@ -203,7 +199,6 @@ def simula_scenario(payload: dict):
         ultima_data = serie.index[-1]
         date_future = pd.date_range(start=ultima_data + timedelta(weeks=1), periods=settimane, freq="W")
 
-        # Costruisci esogene con valori dello scenario
         exog_scenario = []
         for data in date_future:
             exog_scenario.append([
@@ -225,7 +220,6 @@ def simula_scenario(payload: dict):
         print(f"Errore simulazione: {e}")
         return {"errore": str(e)}
 
-        # ---- REVENUE FORECASTING ----
 @app.get("/tariffe/{sito_id}")
 def get_tariffe(sito_id: int):
     try:
@@ -246,7 +240,6 @@ def aggiorna_tariffe(sito_id: int, payload: dict):
     except Exception as e:
         return {"errore": str(e)}
 
-        # ---- PREVISORE BILANCIO STAGIONALE ----
 MACRO_PROVENIENZA = {
     "Italia": "Italia",
     "USA": "Nord America", "Canada": "Nord America",
@@ -385,7 +378,6 @@ def previsioni_economiche(sito_id: str, giorni: int = 14):
         print(f"Errore previsioni economiche sito {sito_id}: {e}")
         return {"errore": str(e)}
 
-        # ---- INDICE DI AUTONOMIA FINANZIARIA PREDITTIVA ----
 @app.get("/indice-autonomia/{sito_id}")
 def indice_autonomia(sito_id: str):
     try:
@@ -441,7 +433,6 @@ def indice_autonomia(sito_id: str):
         print(f"Errore indice autonomia sito {sito_id}: {e}")
         return {"errore": str(e)}
 
-        # ---- PREDICTIVE BREAK-EVEN MATRIX ----
 @app.get("/break-even/{sito_id}")
 def break_even(sito_id: str):
     try:
@@ -521,8 +512,7 @@ def break_even(sito_id: str):
         print(f"Errore break-even sito {sito_id}: {e}")
         return {"errore": str(e)}
 
-        # ---- MATRICE DI ALLOCAZIONE BUDGET DI PROMOZIONE ----
-COSTO_MARGINALE_PCT = 0.15  # quota stimata di costi variabili sul ricavo per visitatore
+COSTO_MARGINALE_PCT = 0.15
 
 def calcola_clv_clusters(sito_id_int, giorni_storico=90, data_inizio=None, data_fine=None):
     tariffe_resp = supabase.table("siti_culturali").select(
@@ -822,7 +812,6 @@ def budget_promozione(sito_id: str):
         print(f"Errore budget promozione sito {sito_id}: {e}")
         return {"errore": str(e)}
 
-        # ---- WELCOME DESK COST OPTIMIZER ----
 def calcola_composizione_settimana(storico, date_settimana):
     composizione_per_giorno = []
     for d in date_settimana:
@@ -985,7 +974,6 @@ def welcome_desk_planner(sito_id: str):
         print(f"Errore welcome desk planner sito {sito_id}: {e}")
         return {"errore": str(e)}
 
-        # ---- ANALISI SENTIMENT RICHIESTE PIT ----
 @app.get("/classifica-sentiment-pit/{richiesta_id}")
 async def classifica_sentiment_pit(richiesta_id: int):
     import httpx
@@ -1038,7 +1026,6 @@ negativo"""
         print(f"Errore classificazione sentiment richiesta {richiesta_id}: {e}")
         return {"errore": str(e)}
 
-        # ---- GENERAZIONE RELAZIONE ----
 @app.post("/genera-relazione")
 async def genera_relazione(payload: dict):
     import httpx
@@ -1116,7 +1103,6 @@ Struttura la relazione con queste sezioni:
         print(f"Errore generazione relazione: {e}")
         return {"errore": str(e)}
 
-        # ---- APPROVAZIONE RICHIESTA EVENTO ----
 def calcola_impatto_da_saturazione(saturazione):
     if saturazione is None:
         return "medio"
@@ -1261,8 +1247,6 @@ def tenta_sarimax_con_esogene(valori, date_lista, sito_id, scenario_esogeno, reg
         print(f"SARIMAX con esogene fallito su serie di {len(valori)} punti: {e}")
         return None, False, len(valori), MINIMO_PUNTI_CON_ESOGENE
 
-
-        # ---- REVENUE FORECASTING EVENTI ----
 @app.get("/revenue-forecasting-eventi")
 def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
     try:
@@ -1404,7 +1388,6 @@ def revenue_forecasting_eventi(comune_id: str = None, sito_id: int = None):
         print(f"Errore revenue forecasting eventi comune {comune_id}: {e}")
         return {"errore": str(e)}
 
-        # ---- CALENDARIO STRATEGICO: VERIFICA DISPONIBILITA EVENTO ----
 @app.get("/verifica-disponibilita-evento")
 def verifica_disponibilita_evento(spazio_id: int, data_inizio: str, data_fine: str, sito_id: int, richiesta_id: int = None):
     try:
@@ -1462,7 +1445,6 @@ def verifica_disponibilita_evento(spazio_id: int, data_inizio: str, data_fine: s
         print(f"Errore verifica disponibilità evento: {e}")
         return {"errore": str(e)}
 
-        # ---- DYNAMIC PRICING: SUGGERIMENTO PER TIPOLOGIA ----
 SOGLIA_SATURAZIONE_DYNAMIC_PRICING = 70
 
 @app.get("/dynamic-pricing-eventi")
@@ -1508,7 +1490,6 @@ def dynamic_pricing_eventi(sito_id: int, tipologia_evento: str):
         print(f"Errore dynamic pricing eventi: {e}")
         return {"errore": str(e)}
 
-        # ---- SIMULATORE SCENARIO EVENTI (SARIMAX con esogene) ----
 @app.post("/simula-scenario-evento")
 def simula_scenario_evento(payload: dict):
     try:
@@ -1563,9 +1544,6 @@ def simula_scenario_evento(payload: dict):
     except Exception as e:
         print(f"Errore simulazione scenario evento: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO DELLA DESTINAZIONE — Sezione 1
-# ============================================================
 
 def ottieni_o_crea_piano_attivo(comune_id_str):
     esistente_resp = supabase.table("piani_strategici").select("*") \
@@ -1774,9 +1752,6 @@ def crea_benchmark_regionale(payload: dict):
     except Exception as e:
         print(f"Errore creazione benchmark regionale: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO — MATRICE SWOT DINAMICA
-# ============================================================
 
 SOGLIA_PCT_DEBOLEZZA = 15.0
 SOGLIA_MIN_SEGNALAZIONI_DEBOLEZZA = 3
@@ -2137,9 +2112,6 @@ def salva_snapshot_swot_tutti():
     except Exception as e:
         print(f"Errore snapshot SWOT tutti i comuni: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO — TREND DOMANDA TURISTICA
-# ============================================================
 
 @app.get("/trend-domanda/{comune_id}")
 def get_trend_domanda(comune_id: str):
@@ -2217,9 +2189,6 @@ def get_trend_domanda(comune_id: str):
     except Exception as e:
         print(f"Errore trend domanda comune {comune_id}: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO — INDICATORI STANDARD
-# ============================================================
 
 SOGLIA_MESI_MIN_STAGIONALITA = 6
 
@@ -2308,9 +2277,6 @@ def get_indicatori_standard(comune_id: str):
     except Exception as e:
         print(f"Errore indicatori standard comune {comune_id}: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO — ANALISI COMPETITOR
-# ============================================================
 
 @app.get("/analisi-competitor/{comune_id}")
 def get_analisi_competitor(comune_id: str):
@@ -2363,9 +2329,6 @@ def elimina_osservazione_competitor(osservazione_id: int):
     except Exception as e:
         print(f"Errore eliminazione osservazione competitor {osservazione_id}: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO — SEZIONE 2: VISIONI E CICLO DI VITA
-# ============================================================
 
 SOGLIA_GIORNI_MIN_FASE_LATO = 15
 SOGLIA_CRESCITA_ALTA_PCT = 15.0
@@ -2635,9 +2598,6 @@ def get_dimensione_sociale(comune_id: str):
     except Exception as e:
         print(f"Errore dimensione sociale comune {comune_id}: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO — IDENTIKIT DESTINAZIONE
-# ============================================================
 
 VOCAZIONI_TURISTICHE = [
     "Balneare / Mare",
@@ -2724,9 +2684,6 @@ def aggiorna_identikit_destinazione(payload: dict):
     except Exception as e:
         print(f"Errore aggiornamento identikit destinazione: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO — STORICO INDICATORI STANDARD
-# ============================================================
 
 def esegui_snapshot_indicatori(comune_id):
     indicatori = get_indicatori_standard(comune_id)
@@ -2800,9 +2757,6 @@ def salva_snapshot_indicatori_tutti():
     except Exception as e:
         print(f"Errore snapshot indicatori tutti i comuni: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO — SEZIONE 3: OBIETTIVI (Pilastro Sostenibilità)
-# ============================================================
 
 SOGLIA_CONCENTRAZIONE_BASSA = 30.0
 SOGLIA_CONCENTRAZIONE_MODERATA = 80.0
@@ -2875,11 +2829,6 @@ def get_sostenibilita_carico(comune_id: str):
         print(f"Errore sostenibilità carico comune {comune_id}: {e}")
         return {"errore": str(e)}
 
-
-# ============================================================
-# PIANO STRATEGICO — SEZIONE 3: OBIETTIVI (Pilastro Accessibilità)
-# ============================================================
-
 @app.get("/accessibilita-pilastro/{comune_id}")
 def get_accessibilita_pilastro(comune_id: str):
     try:
@@ -2929,9 +2878,6 @@ def get_accessibilita_pilastro(comune_id: str):
     except Exception as e:
         print(f"Errore accessibilità pilastro comune {comune_id}: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO — SEZIONE 3: RADAR WELFARE & INNOVAZIONE
-# ============================================================
 
 CATEGORIE_WELFARE_INNOVAZIONE = {
     "Accessibilità potenziata": [
@@ -3235,9 +3181,6 @@ def elimina_obiettivo_piano(obiettivo_id: int):
     except Exception as e:
         print(f"Errore eliminazione obiettivo piano {obiettivo_id}: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO — SEZIONE 4: PATRIMONIO E RISORSE DEL TERRITORIO
-# ============================================================
 
 CATEGORIE_RISORSE_TERRITORIALI = {
     "Collocazione geografica": [
@@ -3551,9 +3494,6 @@ def elimina_risorsa_territoriale(risorsa_id: int):
     except Exception as e:
         print(f"Errore eliminazione risorsa territoriale {risorsa_id}: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO STRATEGICO — SEZIONE 4: PIANO DI MARKETING (Marketing Mix territoriale)
-# ============================================================
 
 def ottieni_o_crea_impostazione_marketing(comune_id_str, piano_id):
     esistente_resp = supabase.table("piano_marketing_impostazione").select("*") \
@@ -3619,9 +3559,6 @@ def aggiorna_piano_marketing(payload: dict):
 
 @app.get("/marketing-mix-prodotto/{comune_id}")
 def get_marketing_mix_prodotto(comune_id: str):
-    """Riepilogo di sintesi che RICHIAMA dati già calcolati altrove (Patrimonio e Risorse,
-    Identikit destinazione, Ciclo di vita) invece di ricalcolarli, per evitare duplicazioni
-    concettuali tra Sezione 2/4 e il Piano di Marketing."""
     try:
         risorse = get_risorse_territoriali(comune_id)
         identikit = get_identikit_destinazione(comune_id)
@@ -3743,11 +3680,6 @@ def elimina_nota_marketing(nota_id: int):
     except Exception as e:
         print(f"Errore eliminazione nota marketing {nota_id}: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO DI MARKETING — COMUNICAZIONE
-# (fonde qui targetizzazione, scheletro canali, alert previsionale e budget/campagne,
-# per non duplicare gli stessi concetti in moduli separati)
-# ============================================================
 
 @app.get("/targetizzazione-marketing/{comune_id}")
 def get_targetizzazione_marketing(comune_id: str):
@@ -3807,7 +3739,6 @@ def get_targetizzazione_marketing(comune_id: str):
     except Exception as e:
         print(f"Errore targetizzazione marketing comune {comune_id}: {e}")
         return {"errore": str(e)}
-
 
 SOGLIA_CALO_ALERT_MARKETING_PCT = -25.0
 
@@ -4056,15 +3987,9 @@ def elimina_campagna_marketing(campagna_id: int):
     except Exception as e:
         print(f"Errore eliminazione campagna marketing {campagna_id}: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO DI MARKETING — DISTRIBUZIONE
-# ============================================================
 
 @app.get("/marketing-mix-distribuzione/{comune_id}")
 def get_marketing_mix_distribuzione(comune_id: str):
-    """Canali distributivi riusano lo stesso meccanismo dei canali di comunicazione (tipo='distribuzione').
-    Trend di consumo e scenari futuri riusano note_marketing_mix. Il portafoglio prodotti richiama
-    l'identikit destinazione gia esistente in Sezione 2, senza ricrearlo."""
     try:
         canali = get_canali_marketing(comune_id, tipo="distribuzione")
 
@@ -4098,11 +4023,6 @@ def get_marketing_mix_distribuzione(comune_id: str):
     except Exception as e:
         print(f"Errore marketing mix distribuzione comune {comune_id}: {e}")
         return {"errore": str(e)}
-# ============================================================
-# PIANO DI MARKETING — PROFILO DEL VISITATORE
-# (riusa targetizzazione-marketing e indicatori-standard gia esistenti per chi/da dove/quando;
-# aggiunge solo l'aggregazione nuova su cosa cercano e cosa manca, dalle richieste PIT)
-# ============================================================
 
 @app.get("/profilo-visitatore/{comune_id}")
 def get_profilo_visitatore(comune_id: str):
@@ -4170,4 +4090,265 @@ def get_profilo_visitatore(comune_id: str):
         }
     except Exception as e:
         print(f"Errore profilo visitatore comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+AZIONI_TIPO = [
+    {"codice": "T-01", "area": "territorio", "titolo": "Segnaletica turistica tematica con QR storytelling", "descrizione": "Cartelli con leggende/curiosita oltre agli indicatori di direzione, con QR per approfondimenti digitali."},
+    {"codice": "T-02", "area": "territorio", "titolo": "Censimento e valorizzazione risorse minori", "descrizione": "Recupero di risorse secondarie o di supporto non ancora valorizzate nella griglia Patrimonio e Risorse."},
+    {"codice": "T-03", "area": "territorio", "titolo": "Miglioramento accessibilita architettonica dei siti", "descrizione": "Rimozione barriere fisiche nei punti a maggiore criticita segnalata."},
+    {"codice": "T-04", "area": "territorio", "titolo": "Mobilita sostenibile e parcheggi scambiatori", "descrizione": "Riduzione del traffico privato nei pressi dei siti a alta concentrazione weekend."},
+    {"codice": "T-05", "area": "territorio", "titolo": "Riqualificazione aree naturali a fruizione turistica", "descrizione": "Sentieristica, aree pic-nic, punti panoramici attrezzati."},
+    {"codice": "T-06", "area": "territorio", "titolo": "Programma ambassador residenti", "descrizione": "Coinvolgimento della popolazione locale nell'accoglienza dei visitatori."},
+    {"codice": "T-07", "area": "territorio", "titolo": "Rete Wi-Fi pubblica nei punti di interesse", "descrizione": "Infrastruttura digitale di base per la fruizione di app e contenuti QR."},
+    {"codice": "T-08", "area": "territorio", "titolo": "Piano di decongestionamento weekend", "descrizione": "Redistribuzione dei flussi su piu giorni tramite orari estesi o eventi infrasettimanali."},
+    {"codice": "T-09", "area": "territorio", "titolo": "Recupero patrimonio industriale o archeologico minore", "descrizione": "Valorizzazione di risorse storiche non ancora aperte al pubblico."},
+    {"codice": "T-10", "area": "territorio", "titolo": "Itinerari tematici intercomunali", "descrizione": "Percorsi che collegano risorse di comuni limitrofi attorno a un tema comune."},
+    {"codice": "T-11", "area": "territorio", "titolo": "Formazione operatori locali", "descrizione": "Lingue straniere, storia locale, tecniche di accoglienza."},
+    {"codice": "T-12", "area": "territorio", "titolo": "Efficientamento infrastrutture di servizio", "descrizione": "Smaltimento rifiuti, distribuzione idrica, in ottica di carico turistico."},
+
+    {"codice": "TU-01", "area": "turismo", "classificazione": "ATL", "titolo": "Affissioni dinamiche", "descrizione": "Bus wrap, pensiline, cartellonistica nei nodi di traffico."},
+    {"codice": "TU-02", "area": "turismo", "classificazione": "ATL", "titolo": "Spot radio/TV in co-marketing regionale", "descrizione": "Costi condivisi con enti sovracomunali o regionali."},
+    {"codice": "TU-03", "area": "turismo", "classificazione": "ATL", "titolo": "Native advertising su portali viaggio generalisti", "descrizione": "Contenuti sponsorizzati integrati editorialmente."},
+    {"codice": "TU-04", "area": "turismo", "classificazione": "ATL", "titolo": "Pubblicazioni illustrate di qualita", "descrizione": "Libri fotografici e guide cartacee curate."},
+    {"codice": "TU-05", "area": "turismo", "classificazione": "BTL", "titolo": "Educational tour per giornalisti e blogger", "descrizione": "Viaggi stampa dedicati a copertura editoriale."},
+    {"codice": "TU-06", "area": "turismo", "classificazione": "BTL", "titolo": "Workshop B2B con tour operator e buyer", "descrizione": "Fiere e buy rivolte al trade di settore."},
+    {"codice": "TU-07", "area": "turismo", "classificazione": "BTL", "titolo": "Fame trip per opinion leader", "descrizione": "Viaggi di celebrita o soggetti noti per generare copertura stampa."},
+    {"codice": "TU-08", "area": "turismo", "classificazione": "BTL", "titolo": "Co-marketing con imprese locali", "descrizione": "Cantine, ristoranti, artigiani in pacchetti cross-promozionali."},
+    {"codice": "TU-09", "area": "turismo", "classificazione": "BTL", "titolo": "Sponsorizzazioni culturali o sportive", "descrizione": "Sostegno a iniziative locali per attrarre attenzione mediatica."},
+    {"codice": "TU-10", "area": "turismo", "classificazione": "BTL", "titolo": "Direct mail e newsletter CRM ex-visitatori", "descrizione": "Fidelizzazione di chi ha gia visitato la destinazione."},
+    {"codice": "TU-11", "area": "turismo", "classificazione": "TTL", "titolo": "Influencer e content creator locali", "descrizione": "Ospitalita in cambio di contenuti social."},
+    {"codice": "TU-12", "area": "turismo", "classificazione": "TTL", "titolo": "Campagne social geolocalizzate", "descrizione": "Retargeting su chi ha gia cercato la destinazione online."},
+    {"codice": "TU-13", "area": "turismo", "classificazione": "TTL", "titolo": "Product placement", "descrizione": "Negoziazione per apparire in film, serie tv o spot pubblicitari."},
+
+    {"codice": "EV-01", "area": "eventi", "titolo": "Calendario eventi integrato multi-sito", "descrizione": "Vista unica degli eventi su tutti i siti del comune."},
+    {"codice": "EV-02", "area": "eventi", "titolo": "Pacchetti bundle evento piu sito culturale", "descrizione": "Biglietto combinato a prezzo agevolato."},
+    {"codice": "EV-03", "area": "eventi", "titolo": "Rassegna stagionale ricorrente", "descrizione": "Format fisso che diventa identitario per la destinazione."},
+    {"codice": "EV-04", "area": "eventi", "titolo": "City card con accesso eventi e trasporti", "descrizione": "Estensione della city card anche agli eventi locali."},
+    {"codice": "EV-05", "area": "eventi", "titolo": "Format itinerante tra le frazioni", "descrizione": "Evento che si sposta tra le localita minori del comune."},
+    {"codice": "EV-06", "area": "eventi", "titolo": "Rievocazioni storiche a tema identitario", "descrizione": "Collegate alla vocazione storico-culturale della destinazione."},
+    {"codice": "EV-07", "area": "eventi", "titolo": "Festival enogastronomico di prodotti locali", "descrizione": "Valorizza filiera corta e artigianato alimentare."},
+    {"codice": "EV-08", "area": "eventi", "titolo": "Programma family-friendly per eventi", "descrizione": "Attivita dedicate ai bambini durante gli eventi principali."},
+    {"codice": "EV-09", "area": "eventi", "titolo": "Evento di destagionalizzazione", "descrizione": "In bassa stagione, con dynamic pricing agevolato."},
+    {"codice": "EV-10", "area": "eventi", "titolo": "Partnership eventi con comuni limitrofi", "descrizione": "Circuito regionale per aumentare l'attrattivita complessiva."},
+
+    {"codice": "SE-01", "area": "servizi", "titolo": "Potenziamento centro di accoglienza attivo", "descrizione": "Personale che si attiva proattivamente verso il visitatore, non solo su richiesta."},
+    {"codice": "SE-02", "area": "servizi", "titolo": "App turistica con audioguide e realta aumentata", "descrizione": "Contenuti digitali fruibili in loco."},
+    {"codice": "SE-03", "area": "servizi", "titolo": "City card unica", "descrizione": "Trasporti, sconti e accesso ai siti in un solo voucher."},
+    {"codice": "SE-04", "area": "servizi", "titolo": "Voucher e carnet sconto multi-esercizio", "descrizione": "Buoni per musei, negozi, bar, ristoranti, trasporti."},
+    {"codice": "SE-05", "area": "servizi", "titolo": "Servizio di visite guidate tematiche", "descrizione": "Aumenta la qualita percepita e i tempi di permanenza."},
+    {"codice": "SE-06", "area": "servizi", "titolo": "Formazione linguistica operatori PIT e siti", "descrizione": "Copertura lingue in base alla provenienza dominante rilevata."},
+    {"codice": "SE-07", "area": "servizi", "titolo": "Punto assistenza digitale self-service", "descrizione": "QR o app nei siti a bassa preferenza cartacea rilevata."},
+    {"codice": "SE-08", "area": "servizi", "titolo": "Servizio di prenotazione online centralizzato", "descrizione": "Unico portale prenotazioni per tutti i siti ed eventi del comune."},
+    {"codice": "SE-09", "area": "servizi", "titolo": "Percorso a 5 tappe del visitatore", "descrizione": "Touchpoint dedicati a pre-partenza, arrivo, permanenza, partenza, ricordo."},
+    {"codice": "SE-10", "area": "servizi", "titolo": "Sistema di raccolta feedback post-visita", "descrizione": "Survey automatizzata via QR o app dopo la visita."},
+    {"codice": "SE-11", "area": "servizi", "titolo": "Accessibilita linguistica per disabilita sensoriali", "descrizione": "Materiali e assistenza per turisti con disabilita visive o uditive."},
+    {"codice": "SE-12", "area": "servizi", "titolo": "Sportello digitale per reclami e segnalazioni", "descrizione": "Canale rapido di segnalazione in tempo reale durante la visita."},
+]
+
+AZIONI_TIPO_MAP = {a["codice"]: a for a in AZIONI_TIPO}
+
+
+@app.get("/azioni-tipo")
+def get_azioni_tipo():
+    per_area = {}
+    for a in AZIONI_TIPO:
+        per_area.setdefault(a["area"], []).append(a)
+    return {
+        "azioni": AZIONI_TIPO,
+        "per_area": per_area,
+        "n_totale": len(AZIONI_TIPO),
+    }
+
+
+def genera_raccomandazioni_azioni(comune_id):
+    raccomandazioni = []
+
+    sostenibilita = get_sostenibilita_carico(comune_id)
+    if "errore" not in sostenibilita and sostenibilita["livello"] in ("alto", "critico"):
+        for codice in ["T-04", "T-08"]:
+            raccomandazioni.append({
+                "codice_azione_tipo": codice,
+                "azione": AZIONI_TIPO_MAP[codice],
+                "segnale": "sostenibilita_carico",
+                "dato_sottostante": sostenibilita["dato_sottostante"],
+            })
+
+    accessibilita = get_accessibilita_pilastro(comune_id)
+    if "errore" not in accessibilita and accessibilita["quota_pct"] >= SOGLIA_PCT_DEBOLEZZA:
+        raccomandazioni.append({
+            "codice_azione_tipo": "T-03",
+            "azione": AZIONI_TIPO_MAP["T-03"],
+            "segnale": "accessibilita_pilastro",
+            "dato_sottostante": accessibilita["dato_sottostante"],
+        })
+
+    welfare = get_welfare_innovazione(comune_id)
+    if "errore" not in welfare:
+        mappa_categoria_azione = {
+            "Digitalizzazione servizi": "SE-02",
+            "Sostenibilita ambientale": "T-04",
+            "Accessibilita potenziata": "T-03",
+            "Inclusione sociale": "SE-11",
+            "Valorizzazione del patrimonio": "T-02",
+        }
+        for r in welfare.get("radar", []):
+            if r["n_iniziative_attive"] == 0 and r["categoria"] in mappa_categoria_azione:
+                codice = mappa_categoria_azione[r["categoria"]]
+                raccomandazioni.append({
+                    "codice_azione_tipo": codice,
+                    "azione": AZIONI_TIPO_MAP[codice],
+                    "segnale": "welfare_innovazione_categoria_scoperta",
+                    "dato_sottostante": f"Nessuna iniziativa attiva registrata nella categoria \"{r['categoria']}\" ({welfare['n_categorie_coperte']} su {welfare['n_categorie_totali']} categorie coperte in totale).",
+                })
+
+    alert = get_alert_previsionale_marketing(comune_id)
+    if "errore" not in alert and alert.get("alert_disponibili") and alert.get("n_alert", 0) > 0:
+        primo_alert = alert["alert"][0]
+        for codice in ["EV-09", "TU-10"]:
+            raccomandazioni.append({
+                "codice_azione_tipo": codice,
+                "azione": AZIONI_TIPO_MAP[codice],
+                "segnale": "alert_previsionale_sarimax",
+                "dato_sottostante": primo_alert["suggerimento"],
+            })
+
+    obiettivi = get_obiettivi_piano(comune_id)
+    if "errore" not in obiettivi:
+        mappa_pilastro_azione = {
+            "sostenibilita": "T-08",
+            "accessibilita": "T-03",
+            "welfare_innovazione": "T-02",
+        }
+        for o in obiettivi.get("obiettivi", []):
+            if o.get("semaforo") == "rosso" and o.get("pilastro") in mappa_pilastro_azione:
+                codice = mappa_pilastro_azione[o["pilastro"]]
+                raccomandazioni.append({
+                    "codice_azione_tipo": codice,
+                    "azione": AZIONI_TIPO_MAP[codice],
+                    "segnale": "obiettivo_mandato_rosso",
+                    "dato_sottostante": o.get("dato_sottostante", ""),
+                })
+
+    return raccomandazioni
+
+
+@app.get("/raccomandazioni-azioni/{comune_id}")
+def get_raccomandazioni_azioni(comune_id: str):
+    try:
+        raccomandazioni = genera_raccomandazioni_azioni(comune_id)
+        return {
+            "comune_id": comune_id,
+            "n_raccomandazioni": len(raccomandazioni),
+            "raccomandazioni": raccomandazioni,
+            "nota_metodologica": (
+                "Le raccomandazioni derivano da 5 segnali gia calcolati altrove in GesTur: indice di "
+                "concentrazione weekend critico, quota di segnalazioni di accessibilita sopra soglia, "
+                "categorie del radar Welfare e Innovazione senza iniziative attive, cali di affluenza "
+                "previsti dal modello SARIMAX a 6 mesi, e obiettivi di mandato in semaforo rosso. Ogni "
+                "raccomandazione riporta il dato che l'ha generata: non sono suggerimenti generici."
+            ),
+        }
+    except Exception as e:
+        print(f"Errore raccomandazioni azioni comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/azioni-piano/{comune_id}")
+def get_azioni_piano(comune_id: str):
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+        azioni_resp = supabase.table("azioni_piano").select("*") \
+            .eq("piano_id", piano["id"]).order("inserito_il", desc=True).execute()
+        azioni = azioni_resp.data or []
+
+        per_stato = {}
+        for a in azioni:
+            per_stato[a["stato"]] = per_stato.get(a["stato"], 0) + 1
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "azioni": azioni,
+            "n_totale": len(azioni),
+            "per_stato": per_stato,
+        }
+    except Exception as e:
+        print(f"Errore azioni piano comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/azioni-piano")
+def crea_azione_piano(payload: dict):
+    try:
+        comune_id_str = payload.get("comune_id")
+        titolo = payload.get("titolo")
+        area = payload.get("area")
+
+        if not comune_id_str or not titolo or not area:
+            return {"errore": "comune_id, titolo e area sono obbligatori"}
+
+        if area not in ("territorio", "turismo", "eventi", "servizi"):
+            return {"errore": "Area non valida"}
+
+        codice_azione_tipo = payload.get("codice_azione_tipo")
+        if codice_azione_tipo and codice_azione_tipo not in AZIONI_TIPO_MAP:
+            return {"errore": "codice_azione_tipo non valido"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        record = {
+            "piano_id": piano["id"],
+            "comune_id": comune_id_str,
+            "codice_azione_tipo": codice_azione_tipo,
+            "area": area,
+            "classificazione": payload.get("classificazione"),
+            "titolo": titolo,
+            "descrizione": payload.get("descrizione"),
+            "vocazione_collegata": payload.get("vocazione_collegata"),
+            "budget_stimato": payload.get("budget_stimato"),
+            "data_inizio": payload.get("data_inizio"),
+            "data_scadenza": payload.get("data_scadenza"),
+            "stato": payload.get("stato", "proposta"),
+            "origine": payload.get("origine", "manuale"),
+            "segnale_origine": payload.get("segnale_origine"),
+            "dato_sottostante_origine": payload.get("dato_sottostante_origine"),
+            "note": payload.get("note"),
+        }
+        creato_resp = supabase.table("azioni_piano").insert(record).execute()
+
+        return {"status": "salvato", "azione": creato_resp.data[0] if creato_resp.data else None}
+    except Exception as e:
+        print(f"Errore creazione azione piano: {e}")
+        return {"errore": str(e)}
+
+
+@app.put("/azioni-piano/{azione_id}")
+def aggiorna_azione_piano(azione_id: int, payload: dict):
+    try:
+        campi_consentiti = {
+            "titolo", "descrizione", "vocazione_collegata", "budget_stimato",
+            "data_inizio", "data_scadenza", "stato", "note",
+        }
+        aggiornamento = {k: v for k, v in payload.items() if k in campi_consentiti}
+        if not aggiornamento:
+            return {"errore": "Nessun campo valido da aggiornare"}
+
+        if "stato" in aggiornamento and aggiornamento["stato"] not in ("proposta", "pianificata", "attiva", "completata", "scartata"):
+            return {"errore": "Stato non valido"}
+
+        aggiornamento["aggiornato_il"] = datetime.now().isoformat()
+        supabase.table("azioni_piano").update(aggiornamento).eq("id", azione_id).execute()
+        return {"status": "aggiornato"}
+    except Exception as e:
+        print(f"Errore aggiornamento azione piano {azione_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.delete("/azioni-piano/{azione_id}")
+def elimina_azione_piano(azione_id: int):
+    try:
+        supabase.table("azioni_piano").delete().eq("id", azione_id).execute()
+        return {"status": "eliminato"}
+    except Exception as e:
+        print(f"Errore eliminazione azione piano {azione_id}: {e}")
         return {"errore": str(e)}
