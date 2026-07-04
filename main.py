@@ -3334,6 +3334,191 @@ def elimina_effetto_atteso(effetto_id: int):
         return {"errore": str(e)}
 
 
+FORMULE_PROMOZIONALI = {
+    "sconto": {
+        "nome": "Sconto diretto",
+        "descrizione": "Riduzione immediata sul prezzo pieno per stimolare la domanda in un periodo definito.",
+        "parametri": [
+            {"chiave": "percentuale_sconto", "label": "Percentuale di sconto", "tipo": "percentuale"},
+            {"chiave": "condizioni", "label": "Condizioni di applicazione", "tipo": "testo"},
+        ],
+    },
+    "coupon": {
+        "nome": "Coupon",
+        "descrizione": "Buono che dà diritto a una riduzione o a un vantaggio all'atto dell'acquisto.",
+        "parametri": [
+            {"chiave": "valore_coupon", "label": "Valore del coupon", "tipo": "euro"},
+            {"chiave": "condizioni_utilizzo", "label": "Condizioni di utilizzo", "tipo": "testo"},
+            {"chiave": "canale_distribuzione", "label": "Canale di distribuzione", "tipo": "testo"},
+        ],
+    },
+    "valore_aggiunto": {
+        "nome": "Valore aggiunto / Omaggio",
+        "descrizione": "Bene o servizio aggiuntivo offerto insieme all'acquisto principale.",
+        "parametri": [
+            {"chiave": "descrizione_omaggio", "label": "Descrizione dell'omaggio", "tipo": "testo"},
+            {"chiave": "valore_omaggio", "label": "Valore dell'omaggio", "tipo": "euro"},
+            {"chiave": "soglia_acquisto", "label": "Soglia minima di acquisto", "tipo": "euro"},
+        ],
+    },
+    "tre_per_due": {
+        "nome": "3x2 e varianti quantità",
+        "descrizione": "Meccanica basata sulla quantità: se ne pagano alcune e se ne ricevono di più.",
+        "parametri": [
+            {"chiave": "quantita_pagata", "label": "Quantità pagata", "tipo": "intero"},
+            {"chiave": "quantita_ricevuta", "label": "Quantità ricevuta", "tipo": "intero"},
+            {"chiave": "condizioni", "label": "Condizioni", "tipo": "testo"},
+        ],
+    },
+    "concorso": {
+        "nome": "Concorsi e lotterie",
+        "descrizione": "Assegnazione di premi tramite estrazione o meccanica di gioco, per generare partecipazione.",
+        "parametri": [
+            {"chiave": "montepremi_totale", "label": "Montepremi totale", "tipo": "euro"},
+            {"chiave": "descrizione_premi", "label": "Descrizione dei premi", "tipo": "testo"},
+            {"chiave": "meccanica_partecipazione", "label": "Meccanica di partecipazione", "tipo": "testo"},
+        ],
+    },
+    "marketing_sociale": {
+        "nome": "Marketing sociale (cause related)",
+        "descrizione": "Parte del ricavo devoluta a una causa, legando l'acquisto a un beneficio collettivo.",
+        "parametri": [
+            {"chiave": "causa_beneficiaria", "label": "Causa beneficiaria", "tipo": "testo"},
+            {"chiave": "quota_devoluta", "label": "Quota devoluta", "tipo": "euro"},
+            {"chiave": "descrizione", "label": "Descrizione", "tipo": "testo"},
+        ],
+    },
+    "self_liquidating": {
+        "nome": "Self-liquidating premium",
+        "descrizione": "Premio autoliquidante: il cliente lo ottiene pagando un prezzo simbolico inferiore al valore reale.",
+        "parametri": [
+            {"chiave": "prezzo_simbolico", "label": "Prezzo simbolico richiesto", "tipo": "euro"},
+            {"chiave": "valore_reale_premio", "label": "Valore reale del premio", "tipo": "euro"},
+            {"chiave": "descrizione_premio", "label": "Descrizione del premio", "tipo": "testo"},
+        ],
+    },
+    "free_premium": {
+        "nome": "Free premium",
+        "descrizione": "Premio gratuito consegnato al cliente, senza costo aggiuntivo per lui.",
+        "parametri": [
+            {"chiave": "descrizione_premio", "label": "Descrizione del premio", "tipo": "testo"},
+            {"chiave": "valore_premio", "label": "Valore del premio", "tipo": "euro"},
+            {"chiave": "modalita_consegna", "label": "Modalità di consegna", "tipo": "testo"},
+        ],
+    },
+    "merchandising": {
+        "nome": "Merchandising",
+        "descrizione": "Articoli brandizzati della destinazione, come leva di promozione e di ricavo accessorio.",
+        "parametri": [
+            {"chiave": "descrizione_articoli", "label": "Descrizione degli articoli", "tipo": "testo"},
+            {"chiave": "prezzo_vendita", "label": "Prezzo di vendita", "tipo": "euro"},
+            {"chiave": "punto_vendita", "label": "Punto vendita", "tipo": "testo"},
+        ],
+    },
+}
+
+CLASSIFICAZIONI_PROMOZIONALI_AMMESSE = ("BTL", "TTL")
+
+
+@app.get("/varianti-promozionali/azione/{azione_id}")
+def get_varianti_promozionali(azione_id: int):
+    try:
+        azione_resp = supabase.table("azioni_piano").select("area, classificazione, comune_id").eq("id", azione_id).single().execute()
+        azione = azione_resp.data
+        if not azione:
+            return {"errore": "Azione non trovata"}
+
+        ammessa = azione.get("area") == "turismo" and azione.get("classificazione") in CLASSIFICAZIONI_PROMOZIONALI_AMMESSE
+
+        varianti_resp = supabase.table("varianti_promozionali").select("*") \
+            .eq("azione_id", azione_id).eq("attivo", True).order("creato_il", desc=True).execute()
+        varianti = varianti_resp.data or []
+
+        risultati = []
+        for v in varianti:
+            tipo = v["tipo_formula"]
+            formula_info = FORMULE_PROMOZIONALI.get(tipo, {})
+            risultati.append({
+                **v,
+                "formula_nome": formula_info.get("nome", tipo),
+                "formula_descrizione": formula_info.get("descrizione", ""),
+                "parametri_schema": formula_info.get("parametri", []),
+            })
+
+        return {
+            "azione_id": azione_id,
+            "comune_id": azione.get("comune_id"),
+            "configurabile": ammessa,
+            "area": azione.get("area"),
+            "classificazione": azione.get("classificazione"),
+            "varianti": risultati,
+            "n_totale": len(risultati),
+            "formule_disponibili": FORMULE_PROMOZIONALI,
+        }
+    except Exception as e:
+        print(f"Errore get varianti promozionali azione {azione_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/varianti-promozionali")
+def crea_variante_promozionale(payload: dict):
+    try:
+        azione_id = payload.get("azione_id")
+        comune_id_str = payload.get("comune_id")
+        tipo_formula = payload.get("tipo_formula")
+        parametri = payload.get("parametri") or {}
+        budget_stimato = payload.get("budget_stimato")
+        data_inizio = payload.get("data_inizio")
+        data_fine = payload.get("data_fine")
+        note = payload.get("note")
+
+        if not azione_id or not comune_id_str or not tipo_formula:
+            return {"errore": "azione_id, comune_id e tipo_formula sono obbligatori"}
+
+        if tipo_formula not in FORMULE_PROMOZIONALI:
+            return {"errore": "Tipo di formula non valido"}
+
+        azione_resp = supabase.table("azioni_piano").select("area, classificazione").eq("id", azione_id).single().execute()
+        azione = azione_resp.data
+        if not azione:
+            return {"errore": "Azione non trovata"}
+
+        if azione.get("area") != "turismo" or azione.get("classificazione") not in CLASSIFICAZIONI_PROMOZIONALI_AMMESSE:
+            return {"errore": "Le formule promozionali sono configurabili solo su azioni di Turismo con classificazione BTL o TTL"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        record = {
+            "azione_id": azione_id,
+            "piano_id": piano["id"],
+            "comune_id": comune_id_str,
+            "tipo_formula": tipo_formula,
+            "parametri": parametri,
+            "budget_stimato": budget_stimato,
+            "data_inizio": data_inizio,
+            "data_fine": data_fine,
+            "note": note,
+        }
+        creato_resp = supabase.table("varianti_promozionali").insert(record).execute()
+
+        return {"status": "salvato", "variante": creato_resp.data[0] if creato_resp.data else None}
+    except Exception as e:
+        print(f"Errore creazione variante promozionale: {e}")
+        return {"errore": str(e)}
+
+
+@app.delete("/varianti-promozionali/{variante_id}")
+def elimina_variante_promozionale(variante_id: int):
+    try:
+        supabase.table("varianti_promozionali").update({"attivo": False}).eq("id", variante_id).execute()
+        return {"status": "disattivato"}
+    except Exception as e:
+        print(f"Errore eliminazione variante promozionale {variante_id}: {e}")
+        return {"errore": str(e)}
+
+
+
+
 
 
 @app.get("/obiettivi-piano/{comune_id}")
