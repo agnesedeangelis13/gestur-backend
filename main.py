@@ -3073,6 +3073,269 @@ def calcola_semaforo_obiettivo(valore_iniziale, valore_attuale, valore_target, d
     }
 
 
+INDICATORI_EFFETTO = {
+    "stagionalita": {
+        "nome": "Stagionalità",
+        "metrica": "Coefficiente di variazione delle presenze mensili (%)",
+        "direzione_migliorativa": "diminuire",
+    },
+    "internazionalizzazione": {
+        "nome": "Internazionalizzazione",
+        "metrica": "Quota di presenze estere sul totale (%)",
+        "direzione_migliorativa": "aumentare",
+    },
+    "concentrazione_weekend": {
+        "nome": "Concentrazione weekend",
+        "metrica": "Indice di concentrazione weekend vs feriale (%)",
+        "direzione_migliorativa": "diminuire",
+    },
+    "accessibilita": {
+        "nome": "Accessibilità",
+        "metrica": "Quota segnalazioni accessibilità sul totale disservizi (%)",
+        "direzione_migliorativa": "diminuire",
+    },
+    "welfare_innovazione": {
+        "nome": "Welfare e Innovazione",
+        "metrica": "Categorie coperte da iniziative attive (su 7)",
+        "direzione_migliorativa": "aumentare",
+    },
+}
+
+
+def leggi_valore_indicatore(comune_id, indicatore):
+    if indicatore == "stagionalita":
+        dati = get_indicatori_standard(comune_id)
+        if "errore" in dati:
+            return None, None
+        stag = dati.get("stagionalita", {})
+        if not stag.get("dati_sufficienti"):
+            return None, None
+        return stag.get("coefficiente_variazione_pct"), stag.get("dato_sottostante")
+    elif indicatore == "internazionalizzazione":
+        dati = get_indicatori_standard(comune_id)
+        if "errore" in dati:
+            return None, None
+        intl = dati.get("internazionalizzazione", {})
+        if not intl.get("dati_sufficienti"):
+            return None, None
+        return intl.get("quota_estera_pct"), intl.get("dato_sottostante")
+    elif indicatore == "concentrazione_weekend":
+        dati = get_sostenibilita_carico(comune_id)
+        if "errore" in dati:
+            return None, None
+        return dati.get("indice_concentrazione_pct"), dati.get("dato_sottostante")
+    elif indicatore == "accessibilita":
+        dati = get_accessibilita_pilastro(comune_id)
+        if "errore" in dati:
+            return None, None
+        return dati.get("quota_pct"), dati.get("dato_sottostante")
+    elif indicatore == "welfare_innovazione":
+        dati = get_welfare_innovazione(comune_id)
+        if "errore" in dati:
+            return None, None
+        raw = f"{dati.get('n_categorie_coperte')} su {dati.get('n_categorie_totali')} categorie coperte da iniziative attive."
+        return dati.get("n_categorie_coperte"), raw
+    return None, None
+
+
+@app.get("/azioni-effetti/{comune_id}")
+def get_azioni_effetti(comune_id: str):
+    try:
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+
+        effetti_resp = supabase.table("azione_effetti_attesi").select("*") \
+            .eq("piano_id", piano["id"]).eq("attivo", True).order("creato_il", desc=True).execute()
+        effetti = effetti_resp.data or []
+
+        oggi = datetime.now().date()
+        valori_cache = {}
+        risultati = []
+        for e in effetti:
+            indicatore = e["indicatore"]
+            indicatore_info = INDICATORI_EFFETTO.get(indicatore, {})
+
+            if indicatore not in valori_cache:
+                valori_cache[indicatore] = leggi_valore_indicatore(comune_id, indicatore)
+            valore_attuale, dato_grezzo = valori_cache[indicatore]
+
+            if valore_attuale is None:
+                risultati.append({
+                    **e,
+                    "indicatore_nome": indicatore_info.get("nome", indicatore),
+                    "metrica": indicatore_info.get("metrica", ""),
+                    "direzione_migliorativa": indicatore_info.get("direzione_migliorativa"),
+                    "valore_attuale": None,
+                    "semaforo": None,
+                    "dato_grezzo_attuale": None,
+                    "messaggio": "Valore attuale non disponibile: dati insufficienti per questo indicatore.",
+                })
+                continue
+
+            data_inizio = datetime.strptime(e["data_inizio"], "%Y-%m-%d").date()
+            data_scadenza = datetime.strptime(e["data_scadenza"], "%Y-%m-%d").date()
+
+            semaforo = calcola_semaforo_obiettivo(
+                e["valore_iniziale"], valore_attuale, e["valore_target"], data_inizio, data_scadenza, oggi
+            )
+
+            risultati.append({
+                **e,
+                "indicatore_nome": indicatore_info.get("nome", indicatore),
+                "metrica": indicatore_info.get("metrica", ""),
+                "direzione_migliorativa": indicatore_info.get("direzione_migliorativa"),
+                "valore_attuale": valore_attuale,
+                "semaforo": semaforo["colore"],
+                "progresso_obiettivo_pct": semaforo["progresso_obiettivo_pct"],
+                "progresso_temporale_pct": semaforo["progresso_temporale_pct"],
+                "dato_grezzo_attuale": dato_grezzo,
+                "dato_sottostante": (
+                    f"Partito da {e['valore_iniziale']}, target {e['valore_target']} entro il "
+                    f"{data_scadenza.strftime('%d/%m/%Y')}. Valore attuale: {valore_attuale}. "
+                    f"Progresso verso l'obiettivo: {semaforo['progresso_obiettivo_pct']}%, "
+                    f"tempo trascorso: {semaforo['progresso_temporale_pct']}%."
+                ),
+            })
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "effetti": risultati,
+            "n_totale": len(risultati),
+            "indicatori_disponibili": INDICATORI_EFFETTO,
+        }
+    except Exception as e:
+        print(f"Errore azioni effetti comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/azioni-effetti/azione/{azione_id}")
+def get_effetti_per_azione(azione_id: int):
+    try:
+        azione_resp = supabase.table("azioni_piano").select("comune_id").eq("id", azione_id).single().execute()
+        azione = azione_resp.data
+        if not azione:
+            return {"errore": "Azione non trovata"}
+
+        comune_id = azione["comune_id"]
+
+        effetti_resp = supabase.table("azione_effetti_attesi").select("*") \
+            .eq("azione_id", azione_id).eq("attivo", True).order("creato_il", desc=True).execute()
+        effetti = effetti_resp.data or []
+
+        oggi = datetime.now().date()
+        valori_cache = {}
+        risultati = []
+        for e in effetti:
+            indicatore = e["indicatore"]
+            indicatore_info = INDICATORI_EFFETTO.get(indicatore, {})
+
+            if indicatore not in valori_cache:
+                valori_cache[indicatore] = leggi_valore_indicatore(comune_id, indicatore)
+            valore_attuale, dato_grezzo = valori_cache[indicatore]
+
+            if valore_attuale is None:
+                risultati.append({
+                    **e,
+                    "indicatore_nome": indicatore_info.get("nome", indicatore),
+                    "metrica": indicatore_info.get("metrica", ""),
+                    "direzione_migliorativa": indicatore_info.get("direzione_migliorativa"),
+                    "valore_attuale": None,
+                    "semaforo": None,
+                    "dato_grezzo_attuale": None,
+                    "messaggio": "Valore attuale non disponibile: dati insufficienti per questo indicatore.",
+                })
+                continue
+
+            data_inizio = datetime.strptime(e["data_inizio"], "%Y-%m-%d").date()
+            data_scadenza = datetime.strptime(e["data_scadenza"], "%Y-%m-%d").date()
+
+            semaforo = calcola_semaforo_obiettivo(
+                e["valore_iniziale"], valore_attuale, e["valore_target"], data_inizio, data_scadenza, oggi
+            )
+
+            risultati.append({
+                **e,
+                "indicatore_nome": indicatore_info.get("nome", indicatore),
+                "metrica": indicatore_info.get("metrica", ""),
+                "direzione_migliorativa": indicatore_info.get("direzione_migliorativa"),
+                "valore_attuale": valore_attuale,
+                "semaforo": semaforo["colore"],
+                "progresso_obiettivo_pct": semaforo["progresso_obiettivo_pct"],
+                "progresso_temporale_pct": semaforo["progresso_temporale_pct"],
+                "dato_grezzo_attuale": dato_grezzo,
+                "dato_sottostante": (
+                    f"Partito da {e['valore_iniziale']}, target {e['valore_target']} entro il "
+                    f"{data_scadenza.strftime('%d/%m/%Y')}. Valore attuale: {valore_attuale}. "
+                    f"Progresso verso l'obiettivo: {semaforo['progresso_obiettivo_pct']}%, "
+                    f"tempo trascorso: {semaforo['progresso_temporale_pct']}%."
+                ),
+            })
+
+        return {
+            "azione_id": azione_id,
+            "comune_id": comune_id,
+            "effetti": risultati,
+            "n_totale": len(risultati),
+            "indicatori_disponibili": INDICATORI_EFFETTO,
+        }
+    except Exception as e:
+        print(f"Errore effetti per azione {azione_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.post("/azioni-effetti")
+def crea_effetto_atteso(payload: dict):
+    try:
+        azione_id = payload.get("azione_id")
+        comune_id_str = payload.get("comune_id")
+        indicatore = payload.get("indicatore")
+        valore_target = payload.get("valore_target")
+        data_scadenza = payload.get("data_scadenza")
+        note = payload.get("note")
+
+        if not azione_id or not comune_id_str or not indicatore or valore_target is None or not data_scadenza:
+            return {"errore": "azione_id, comune_id, indicatore, valore_target e data_scadenza sono obbligatori"}
+
+        if indicatore not in INDICATORI_EFFETTO:
+            return {"errore": "Indicatore non valido"}
+
+        valore_iniziale, _ = leggi_valore_indicatore(comune_id_str, indicatore)
+        if valore_iniziale is None:
+            return {"errore": "Impossibile leggere il valore attuale per questo indicatore: dati insufficienti"}
+
+        piano = ottieni_o_crea_piano_attivo(comune_id_str)
+
+        record = {
+            "azione_id": azione_id,
+            "piano_id": piano["id"],
+            "comune_id": comune_id_str,
+            "indicatore": indicatore,
+            "valore_iniziale": valore_iniziale,
+            "valore_target": valore_target,
+            "data_inizio": datetime.now().strftime("%Y-%m-%d"),
+            "data_scadenza": data_scadenza,
+            "note": note,
+        }
+        creato_resp = supabase.table("azione_effetti_attesi").insert(record).execute()
+
+        return {"status": "salvato", "effetto": creato_resp.data[0] if creato_resp.data else None}
+    except Exception as e:
+        print(f"Errore creazione effetto atteso: {e}")
+        return {"errore": str(e)}
+
+
+@app.delete("/azioni-effetti/{effetto_id}")
+def elimina_effetto_atteso(effetto_id: int):
+    try:
+        supabase.table("azione_effetti_attesi").update({"attivo": False}).eq("id", effetto_id).execute()
+        return {"status": "disattivato"}
+    except Exception as e:
+        print(f"Errore eliminazione effetto atteso {effetto_id}: {e}")
+        return {"errore": str(e)}
+
+
+
+
 @app.get("/obiettivi-piano/{comune_id}")
 def get_obiettivi_piano(comune_id: str):
     try:
