@@ -10,6 +10,17 @@ from dotenv import load_dotenv
 from weather_service import aggiorna_meteo_tutti_siti
 from festivita_service import popola_festivita
 from alert_service import invia_alert_previsioni
+from imposta_soggiorno_service import (
+    CATEGORIE_DESTINAZIONE_SOGGIORNO,
+    ottieni_o_crea_piano_sviluppo_locale_attivo,
+    get_gettito_soggiorno,
+    crea_gettito_soggiorno,
+    get_categorie_destinazione,
+    aggiorna_categoria_destinazione,
+    get_allocazioni_soggiorno,
+    crea_allocazione_soggiorno,
+    elimina_allocazione_soggiorno,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -3004,6 +3015,7 @@ def elimina_iniziativa_welfare(iniziativa_id: int):
     except Exception as e:
         print(f"Errore eliminazione iniziativa welfare {iniziativa_id}: {e}")
         return {"errore": str(e)}
+
 PILASTRI_OBIETTIVI = {
     "sostenibilita": {
         "nome": "Sostenibilità e Carico",
@@ -3333,7 +3345,6 @@ def elimina_effetto_atteso(effetto_id: int):
         print(f"Errore eliminazione effetto atteso {effetto_id}: {e}")
         return {"errore": str(e)}
 
-
 FORMULE_PROMOZIONALI = {
     "sconto": {
         "nome": "Sconto diretto",
@@ -3515,10 +3526,6 @@ def elimina_variante_promozionale(variante_id: int):
     except Exception as e:
         print(f"Errore eliminazione variante promozionale {variante_id}: {e}")
         return {"errore": str(e)}
-
-
-
-
 
 
 @app.get("/obiettivi-piano/{comune_id}")
@@ -4274,7 +4281,6 @@ def get_alert_previsionale_marketing(comune_id: str):
         print(f"Errore alert previsionale marketing comune {comune_id}: {e}")
         return {"errore": str(e)}
 
-
 CANALI_COMUNICAZIONE_STANDARD = [
     "Social media (Facebook/Instagram)", "Sito web istituzionale", "Newsletter ed email marketing",
     "Radio locale", "Stampa locale", "Cartellonistica e affissioni", "Fiere ed eventi di settore",
@@ -4800,3 +4806,38 @@ def elimina_azione_piano(azione_id: int):
     except Exception as e:
         print(f"Errore eliminazione azione piano {azione_id}: {e}")
         return {"errore": str(e)}
+
+
+@app.get("/gettito-soggiorno/{comune_id}")
+def endpoint_get_gettito_soggiorno(comune_id: str):
+    return get_gettito_soggiorno(comune_id)
+
+
+@app.post("/gettito-soggiorno")
+def endpoint_crea_gettito_soggiorno(payload: dict):
+    return crea_gettito_soggiorno(payload)
+
+
+@app.get("/categorie-destinazione-soggiorno/{comune_id}")
+def endpoint_get_categorie_destinazione(comune_id: str):
+    return get_categorie_destinazione(comune_id)
+
+
+@app.put("/categorie-destinazione-soggiorno")
+def endpoint_aggiorna_categoria_destinazione(payload: dict):
+    return aggiorna_categoria_destinazione(payload)
+
+
+@app.get("/allocazioni-soggiorno/{comune_id}")
+def endpoint_get_allocazioni_soggiorno(comune_id: str, anno: int = None, mese: int = None):
+    return get_allocazioni_soggiorno(comune_id, anno, mese)
+
+
+@app.post("/allocazioni-soggiorno")
+def endpoint_crea_allocazione_soggiorno(payload: dict):
+    return crea_allocazione_soggiorno(payload)
+
+
+@app.delete("/allocazioni-soggiorno/{allocazione_id}")
+def endpoint_elimina_allocazione_soggiorno(allocazione_id: int):
+    return elimina_allocazione_soggiorno(allocazione_id)
