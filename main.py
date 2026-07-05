@@ -25,6 +25,7 @@ from compensazione_territoriale_service import (
     get_quote_capitoli,
     aggiorna_quota_capitolo,
     get_suggerimento_distribuzione,
+    get_matrice_redistribuzione,
 )
 from qualita_esperienza_service import (
     get_quota_reinvestimento,
@@ -4913,3 +4914,8 @@ def endpoint_aggiorna_capitolo_qoe(payload: dict):
 @app.get("/qualita-esperienza/budget/{comune_id}")
 def endpoint_get_budget_qoe_mese(comune_id: str, anno: int, mese: int):
     return get_budget_qoe_mese(comune_id, anno, mese, calcola_valore_siti_periodo, calcola_range_mese)
+
+
+@app.get("/matrice-redistribuzione/{comune_id}")
+def endpoint_get_matrice_redistribuzione(comune_id: str, anno: int, mese: int):
+    return get_matrice_redistribuzione(comune_id, anno, mese, calcola_valore_siti_periodo, calcola_range_mese)
