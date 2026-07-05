@@ -21,6 +21,11 @@ from imposta_soggiorno_service import (
     crea_allocazione_soggiorno,
     elimina_allocazione_soggiorno,
 )
+from compensazione_territoriale_service import (
+    get_quote_capitoli,
+    aggiorna_quota_capitolo,
+    get_suggerimento_distribuzione,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -2474,63 +2479,83 @@ def get_ciclo_vita_destinazione(comune_id: str):
         return {"errore": str(e)}
 
 
+def calcola_valore_siti_periodo(comune_id, data_inizio_str, data_fine_str):
+    siti = ottieni_siti_comune(comune_id)
+    if not siti:
+        return None
+    sito_ids = [s["id"] for s in siti]
+
+    valore_totale_biglietti = 0
+    valore_totale_commerciale = 0
+    n_siti_con_dati = 0
+
+    for sito_id in sito_ids:
+        tariffe_resp = supabase.table("siti_culturali").select(
+            "nome_sito, prezzo_biglietto, prezzo_ridotto, percentuale_ridotti, "
+            "percentuale_bookshop, spesa_media_bookshop, "
+            "percentuale_ristorazione, spesa_media_ristorazione"
+        ).eq("id", sito_id).single().execute()
+        tariffe = tariffe_resp.data
+        if not tariffe or tariffe.get("prezzo_biglietto") is None:
+            continue
+
+        coeff_resp = supabase.table("coefficienti_spesa").select("*").eq("sito_id", sito_id).execute()
+        coefficienti = {(c["fascia"], c["provenienza_macro"], c["tipo_visitatore"]): c["coefficiente"] for c in coeff_resp.data}
+
+        storico_resp = supabase.table("presenza").select("data, gruppo, fasce, provenienza, tipo_visitatore") \
+            .eq("sito_id", sito_id).gte("data", data_inizio_str).lte("data", data_fine_str).execute()
+        storico = storico_resp.data
+        if not storico:
+            continue
+
+        n_siti_con_dati += 1
+        prezzo_medio = tariffe["prezzo_biglietto"] * (1 - tariffe["percentuale_ridotti"] / 100) + tariffe["prezzo_ridotto"] * (tariffe["percentuale_ridotti"] / 100)
+        bookshop_base = (tariffe["percentuale_bookshop"] / 100) * tariffe["spesa_media_bookshop"]
+        ristorazione_base = (tariffe["percentuale_ristorazione"] / 100) * tariffe["spesa_media_ristorazione"]
+
+        for r in storico:
+            fasce = [normalizza_fascia(f) for f in (r.get("fasce") or "").split(", ") if f]
+            if not fasce:
+                continue
+            n_persone = r.get("gruppo", 0) or 0
+            tipo = r.get("tipo_visitatore") or "gruppo"
+            prov_macro = mappa_provenienza_macro(r.get("provenienza"))
+            per_fascia = n_persone / len(fasce)
+
+            for f in fasce:
+                coeff = coefficienti.get((f, prov_macro, tipo), 1.0)
+                valore_totale_biglietti += per_fascia * prezzo_medio
+                valore_totale_commerciale += per_fascia * (bookshop_base + ristorazione_base) * coeff
+
+    if n_siti_con_dati == 0:
+        return None
+
+    return {
+        "n_siti_con_dati": n_siti_con_dati,
+        "valore_biglietti": round(valore_totale_biglietti, 2),
+        "valore_commerciale": round(valore_totale_commerciale, 2),
+        "valore_totale": round(valore_totale_biglietti + valore_totale_commerciale, 2),
+    }
+
+
 @app.get("/dimensione-economica/{comune_id}")
 def get_dimensione_economica(comune_id: str):
     try:
-        siti = ottieni_siti_comune(comune_id)
-        if not siti:
-            return {"errore": "Nessun sito culturale trovato per questo comune"}
-        sito_ids = [s["id"] for s in siti]
-
         oggi = datetime.now()
         dodici_mesi_fa = oggi - timedelta(days=365)
 
-        valore_totale_biglietti = 0
-        valore_totale_commerciale = 0
-        n_siti_con_dati = 0
+        risultato = calcola_valore_siti_periodo(comune_id, dodici_mesi_fa.strftime("%Y-%m-%d"), oggi.strftime("%Y-%m-%d"))
 
-        for sito_id in sito_ids:
-            tariffe_resp = supabase.table("siti_culturali").select(
-                "nome_sito, prezzo_biglietto, prezzo_ridotto, percentuale_ridotti, "
-                "percentuale_bookshop, spesa_media_bookshop, "
-                "percentuale_ristorazione, spesa_media_ristorazione"
-            ).eq("id", sito_id).single().execute()
-            tariffe = tariffe_resp.data
-            if not tariffe or tariffe.get("prezzo_biglietto") is None:
-                continue
-
-            coeff_resp = supabase.table("coefficienti_spesa").select("*").eq("sito_id", sito_id).execute()
-            coefficienti = {(c["fascia"], c["provenienza_macro"], c["tipo_visitatore"]): c["coefficiente"] for c in coeff_resp.data}
-
-            storico_resp = supabase.table("presenza").select("data, gruppo, fasce, provenienza, tipo_visitatore") \
-                .eq("sito_id", sito_id).gte("data", dodici_mesi_fa.strftime("%Y-%m-%d")).execute()
-            storico = storico_resp.data
-            if not storico:
-                continue
-
-            n_siti_con_dati += 1
-            prezzo_medio = tariffe["prezzo_biglietto"] * (1 - tariffe["percentuale_ridotti"] / 100) + tariffe["prezzo_ridotto"] * (tariffe["percentuale_ridotti"] / 100)
-            bookshop_base = (tariffe["percentuale_bookshop"] / 100) * tariffe["spesa_media_bookshop"]
-            ristorazione_base = (tariffe["percentuale_ristorazione"] / 100) * tariffe["spesa_media_ristorazione"]
-
-            for r in storico:
-                fasce = [normalizza_fascia(f) for f in (r.get("fasce") or "").split(", ") if f]
-                if not fasce:
-                    continue
-                n_persone = r.get("gruppo", 0) or 0
-                tipo = r.get("tipo_visitatore") or "gruppo"
-                prov_macro = mappa_provenienza_macro(r.get("provenienza"))
-                per_fascia = n_persone / len(fasce)
-
-                for f in fasce:
-                    coeff = coefficienti.get((f, prov_macro, tipo), 1.0)
-                    valore_totale_biglietti += per_fascia * prezzo_medio
-                    valore_totale_commerciale += per_fascia * (bookshop_base + ristorazione_base) * coeff
-
-        if n_siti_con_dati == 0:
+        if risultato is None:
+            siti = ottieni_siti_comune(comune_id)
+            if not siti:
+                return {"errore": "Nessun sito culturale trovato per questo comune"}
             return {"errore": "Nessun sito con tariffe configurate e dati storici sufficienti per calcolare il valore economico"}
 
-        valore_totale = round(valore_totale_biglietti + valore_totale_commerciale, 2)
+        n_siti_con_dati = risultato["n_siti_con_dati"]
+        valore_totale_biglietti = risultato["valore_biglietti"]
+        valore_totale_commerciale = risultato["valore_commerciale"]
+        valore_totale = risultato["valore_totale"]
 
         return {
             "comune_id": comune_id,
@@ -4841,3 +4866,18 @@ def endpoint_crea_allocazione_soggiorno(payload: dict):
 @app.delete("/allocazioni-soggiorno/{allocazione_id}")
 def endpoint_elimina_allocazione_soggiorno(allocazione_id: int):
     return elimina_allocazione_soggiorno(allocazione_id)
+
+
+@app.get("/compensazione-territoriale/quote/{comune_id}")
+def endpoint_get_quote_capitoli(comune_id: str):
+    return get_quote_capitoli(comune_id)
+
+
+@app.put("/compensazione-territoriale/quote")
+def endpoint_aggiorna_quota_capitolo(payload: dict):
+    return aggiorna_quota_capitolo(payload)
+
+
+@app.get("/compensazione-territoriale/suggerimento/{comune_id}")
+def endpoint_get_suggerimento_distribuzione(comune_id: str, anno: int, mese: int):
+    return get_suggerimento_distribuzione(comune_id, anno, mese, calcola_valore_siti_periodo)
