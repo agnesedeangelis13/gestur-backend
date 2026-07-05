@@ -6,7 +6,7 @@ from imposta_soggiorno_service import (
     CATEGORIE_DESTINAZIONE_SOGGIORNO,
     ottieni_o_crea_piano_sviluppo_locale_attivo,
 )
-from qualita_esperienza_service import get_budget_qoe_mese_totale
+from qualita_esperienza_service import get_budget_qoe_mese_totale, get_budget_qoe_mese
 
 load_dotenv()
 
@@ -334,4 +334,75 @@ def get_suggerimento_distribuzione(comune_id, anno, mese, valore_siti_helper):
         }
     except Exception as e:
         print(f"Errore suggerimento distribuzione comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+def get_matrice_redistribuzione(comune_id, anno, mese, valore_siti_helper, calcola_range_mese_fn):
+    try:
+        suggerimento = get_suggerimento_distribuzione(comune_id, anno, mese, valore_siti_helper)
+        if "errore" in suggerimento:
+            return {"errore": suggerimento["errore"]}
+        if not suggerimento.get("dati_sufficienti"):
+            return {
+                "comune_id": comune_id,
+                "anno": anno,
+                "mese": mese,
+                "dati_sufficienti": False,
+                "messaggio": suggerimento.get("messaggio"),
+            }
+
+        budget_qoe = get_budget_qoe_mese(comune_id, anno, mese, valore_siti_helper, calcola_range_mese_fn)
+
+        ricchezza = suggerimento["ricchezza_estratta"]
+        incasso_totale = (ricchezza["gettito_soggiorno_mese"] or 0) + (ricchezza["valore_siti_culturali_lordo_mese"] or 0)
+
+        segmenti = []
+        for c in suggerimento["distribuzione_suggerita"]:
+            if c["importo_suggerito"] > 0:
+                segmenti.append({
+                    "nome": c["nome"],
+                    "importo": c["importo_suggerito"],
+                    "dominio": "welfare_cittadino",
+                })
+
+        if budget_qoe.get("dati_sufficienti"):
+            for c in budget_qoe["distribuzione_capitoli"]:
+                if c["importo_suggerito"] > 0:
+                    segmenti.append({
+                        "nome": c["nome"],
+                        "importo": c["importo_suggerito"],
+                        "dominio": "welfare_turista",
+                    })
+
+        if ricchezza["gia_allocato_mese"] > 0:
+            segmenti.append({
+                "nome": "Già allocato (Imposta di Soggiorno)",
+                "importo": ricchezza["gia_allocato_mese"],
+                "dominio": "gia_allocato",
+            })
+
+        segmenti.sort(key=lambda x: x["importo"], reverse=True)
+
+        return {
+            "comune_id": comune_id,
+            "anno": anno,
+            "mese": mese,
+            "dati_sufficienti": True,
+            "incasso_totale": round(incasso_totale, 2),
+            "gettito_soggiorno_mese": ricchezza["gettito_soggiorno_mese"],
+            "valore_siti_culturali_lordo_mese": ricchezza["valore_siti_culturali_lordo_mese"],
+            "budget_qoe_totale": ricchezza["budget_qoe_riservato_mese"],
+            "residuo_cittadino_totale": ricchezza["residuo_da_distribuire"],
+            "gia_allocato_mese": ricchezza["gia_allocato_mese"],
+            "segmenti": segmenti,
+            "nota_metodologica": (
+                "Questa matrice non introduce nuovi calcoli: combina in un'unica vista i risultati già calcolati "
+                "dai moduli Compensazione Territoriale (welfare cittadino) e Qualità dell'Esperienza (welfare del "
+                "turista), a partire dallo stesso incasso totale (imposta di soggiorno più valore lordo dei siti "
+                "culturali del mese, eventi esclusi). Ogni segmento del grafico rimanda esattamente alla stessa "
+                "cifra mostrata nel modulo di origine."
+            ),
+        }
+    except Exception as e:
+        print(f"Errore matrice redistribuzione comune {comune_id}: {e}")
         return {"errore": str(e)}
