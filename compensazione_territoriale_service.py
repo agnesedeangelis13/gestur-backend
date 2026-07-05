@@ -1,4 +1,3 @@
-import re
 from datetime import datetime
 from supabase import create_client
 import os
@@ -16,15 +15,6 @@ supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 TETTO_CORRETTIVO_PUNTI = 15.0
 SOGLIA_MIN_DISSERVIZI_CRITICITA = 3
-
-STOPWORD_KEYWORDS = {"per", "dei", "delle", "della", "del", "e", "di", "da", "al", "alla", "locale", "locali"}
-
-
-def normalizza_parola(testo):
-    testo = testo.lower()
-    testo = testo.replace("à", "a").replace("è", "e").replace("é", "e").replace("ì", "i").replace("ò", "o").replace("ù", "u")
-    testo = re.sub(r"[^a-z0-9\s]", " ", testo)
-    return [p for p in testo.split() if len(p) > 3 and p not in STOPWORD_KEYWORDS]
 
 
 def calcola_range_mese_locale(anno, mese):
@@ -117,35 +107,54 @@ def aggiorna_quota_capitolo(payload):
         return {"errore": str(e)}
 
 
+MAPPATURA_DISSERVIZIO_CAPITOLO = {
+    "Trasporti": ["trasporto_pubblico"],
+    "Segnaletica": ["manutenzione_urbana"],
+    "Parcheggio": ["manutenzione_urbana"],
+    "Servizi igienici": ["manutenzione_urbana"],
+    "Accessibilità": ["manutenzione_urbana"],
+    "Musei e siti culturali": ["cultura_biblioteche"],
+    "Wi-Fi e connettività": ["servizi_digitali"],
+    "Pulizia": ["manutenzione_urbana"],
+    "Manutenzione struttura": ["manutenzione_urbana"],
+    "Sicurezza": ["sicurezza"],
+}
+
+
 def calcola_criticita_per_categoria(comune_id):
     try:
         richieste_resp = supabase.table("richieste_pit").select("categorie_disservizio") \
             .eq("comune_id", comune_id).execute()
         richieste = richieste_resp.data or []
 
-        disservizi = [r["categorie_disservizio"] for r in richieste if r.get("categorie_disservizio") and r["categorie_disservizio"].strip().lower() != "altro"]
-        totale_disservizi = len(disservizi)
+        tag_disservizio = []
+        for r in richieste:
+            valore = r.get("categorie_disservizio")
+            if not valore:
+                continue
+            for tag in valore.split(", "):
+                tag = tag.strip()
+                if tag and tag.lower() != "altro":
+                    tag_disservizio.append(tag)
 
+        totale_disservizi = len(tag_disservizio)
         if totale_disservizi < SOGLIA_MIN_DISSERVIZI_CRITICITA:
             return {}, totale_disservizi
 
-        conteggio_per_valore = {}
-        for d in disservizi:
-            conteggio_per_valore[d] = conteggio_per_valore.get(d, 0) + 1
-
-        parole_categoria = {}
-        for chiave, info in CATEGORIE_DESTINAZIONE_SOGGIORNO.items():
-            parole_categoria[chiave] = set(normalizza_parola(info["nome"]))
+        conteggio_per_tag = {}
+        for tag in tag_disservizio:
+            conteggio_per_tag[tag] = conteggio_per_tag.get(tag, 0) + 1
 
         peso_per_categoria = {chiave: 0 for chiave in CATEGORIE_DESTINAZIONE_SOGGIORNO}
         dettaglio_match = {chiave: [] for chiave in CATEGORIE_DESTINAZIONE_SOGGIORNO}
 
-        for valore_disservizio, conteggio in conteggio_per_valore.items():
-            parole_disservizio = set(normalizza_parola(valore_disservizio))
-            for chiave, parole_cat in parole_categoria.items():
-                if parole_disservizio & parole_cat:
-                    peso_per_categoria[chiave] += conteggio
-                    dettaglio_match[chiave].append(f"{valore_disservizio} ({conteggio})")
+        for tag, conteggio in conteggio_per_tag.items():
+            capitoli_associati = MAPPATURA_DISSERVIZIO_CAPITOLO.get(tag)
+            if not capitoli_associati:
+                continue
+            for chiave in capitoli_associati:
+                peso_per_categoria[chiave] += conteggio
+                dettaglio_match[chiave].append(f"{tag} ({conteggio})")
 
         totale_match = sum(peso_per_categoria.values())
         if totale_match == 0:
@@ -163,8 +172,8 @@ def calcola_criticita_per_categoria(comune_id):
                 "punti": round(scostamento_limitato, 1),
                 "dato_sottostante": (
                     f"Segnalazioni PIT collegate a \"{CATEGORIE_DESTINAZIONE_SOGGIORNO[chiave]['nome']}\": "
-                    f"{', '.join(dettaglio_match[chiave])}, pari al {quota_osservata_pct}% dei {totale_disservizi} "
-                    f"disservizi totali registrati."
+                    f"{', '.join(dettaglio_match[chiave])}, pari al {quota_osservata_pct}% delle {totale_disservizi} "
+                    f"segnalazioni di disservizio registrate (una richiesta puo contenere piu di una segnalazione)."
                 ),
             }
 
