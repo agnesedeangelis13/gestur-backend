@@ -26,6 +26,13 @@ from compensazione_territoriale_service import (
     aggiorna_quota_capitolo,
     get_suggerimento_distribuzione,
 )
+from qualita_esperienza_service import (
+    get_quota_reinvestimento,
+    aggiorna_quota_reinvestimento,
+    get_capitoli_qoe,
+    aggiorna_capitolo_qoe,
+    get_budget_qoe_mese,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -4881,3 +4888,28 @@ def endpoint_aggiorna_quota_capitolo(payload: dict):
 @app.get("/compensazione-territoriale/suggerimento/{comune_id}")
 def endpoint_get_suggerimento_distribuzione(comune_id: str, anno: int, mese: int):
     return get_suggerimento_distribuzione(comune_id, anno, mese, calcola_valore_siti_periodo)
+
+
+@app.get("/qualita-esperienza/quota-reinvestimento/{comune_id}")
+def endpoint_get_quota_reinvestimento(comune_id: str):
+    return get_quota_reinvestimento(comune_id)
+
+
+@app.put("/qualita-esperienza/quota-reinvestimento")
+def endpoint_aggiorna_quota_reinvestimento(payload: dict):
+    return aggiorna_quota_reinvestimento(payload)
+
+
+@app.get("/qualita-esperienza/capitoli/{comune_id}")
+def endpoint_get_capitoli_qoe(comune_id: str):
+    return get_capitoli_qoe(comune_id)
+
+
+@app.put("/qualita-esperienza/capitoli")
+def endpoint_aggiorna_capitolo_qoe(payload: dict):
+    return aggiorna_capitolo_qoe(payload)
+
+
+@app.get("/qualita-esperienza/budget/{comune_id}")
+def endpoint_get_budget_qoe_mese(comune_id: str, anno: int, mese: int):
+    return get_budget_qoe_mese(comune_id, anno, mese, calcola_valore_siti_periodo, calcola_range_mese)
