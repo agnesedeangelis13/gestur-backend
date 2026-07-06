@@ -7,6 +7,7 @@ from imposta_soggiorno_service import (
     ottieni_o_crea_piano_sviluppo_locale_attivo,
 )
 from qualita_esperienza_service import get_budget_qoe_mese_totale, get_budget_qoe_mese
+from entrate_aggiuntive_service import get_totale_altre_entrate_mese
 
 load_dotenv()
 
@@ -234,6 +235,8 @@ def get_ricchezza_estratta_mese(comune_id, anno, mese, valore_siti_helper):
     risultato_siti = valore_siti_helper(comune_id, data_inizio, data_fine)
     valore_siti_lordo_mese = risultato_siti["valore_totale"] if risultato_siti else None
 
+    altre_entrate_mese = get_totale_altre_entrate_mese(comune_id, anno, mese)
+
     budget_qoe_mese = get_budget_qoe_mese_totale(comune_id, valore_siti_lordo_mese) if valore_siti_lordo_mese else 0
     valore_siti_netto_mese = (valore_siti_lordo_mese - budget_qoe_mese) if valore_siti_lordo_mese is not None else None
 
@@ -241,15 +244,18 @@ def get_ricchezza_estratta_mese(comune_id, anno, mese, valore_siti_helper):
         .eq("piano_id", piano["id"]).eq("anno", anno).eq("mese", mese).eq("attivo", True).execute()
     gia_allocato_mese = sum(a["importo_allocato"] or 0 for a in (allocazioni_resp.data or []))
 
-    ricchezza_totale = (gettito_mese or 0) + (valore_siti_netto_mese or 0)
+    ricchezza_totale = (gettito_mese or 0) + (valore_siti_netto_mese or 0) + (altre_entrate_mese or 0)
+
+    dati_disponibili = gettito_mese is not None or valore_siti_netto_mese is not None or altre_entrate_mese is not None
 
     return {
         "piano_id": piano["id"],
         "gettito_soggiorno_mese": gettito_mese,
         "valore_siti_culturali_lordo_mese": valore_siti_lordo_mese,
+        "altre_entrate_turistiche_mese": altre_entrate_mese,
         "budget_qoe_riservato_mese": budget_qoe_mese,
         "valore_siti_culturali_mese": valore_siti_netto_mese,
-        "ricchezza_totale_mese": round(ricchezza_totale, 2) if (gettito_mese is not None or valore_siti_netto_mese is not None) else None,
+        "ricchezza_totale_mese": round(ricchezza_totale, 2) if dati_disponibili else None,
         "gia_allocato_mese": round(gia_allocato_mese, 2),
         "residuo_da_distribuire": round(max(ricchezza_totale - gia_allocato_mese, 0), 2),
         "allocato_supera_ricchezza": gia_allocato_mese > ricchezza_totale,
@@ -321,11 +327,12 @@ def get_suggerimento_distribuzione(comune_id, anno, mese, valore_siti_helper):
             "distribuzione_suggerita": dettaglio_capitoli,
             "tetto_correttivo_punti": TETTO_CORRETTIVO_PUNTI,
             "nota_metodologica": (
-                "La ricchezza estratta somma il gettito dell'imposta di soggiorno del mese e il valore economico "
+                "La ricchezza estratta somma il gettito dell'imposta di soggiorno del mese, il valore economico "
                 "netto dei siti culturali nello stesso mese (biglietteria, bookshop, ristorazione collegati alla "
-                "visita, al netto di quanto già riservato al reinvestimento in Qualità dell'Esperienza); gli eventi "
-                "locali non sono inclusi. Il residuo da distribuire è la ricchezza del mese non ancora allocata "
-                "tramite il modulo Imposta di Soggiorno. La distribuzione suggerita parte dalle "
+                "visita, al netto di quanto già riservato al reinvestimento in Qualità dell'Esperienza) e le "
+                "eventuali altre entrate turistiche aggiuntive definite dal comune (es. parcheggi, ticket bus); "
+                "gli eventi locali non sono inclusi. Il residuo da distribuire è la ricchezza del mese non ancora "
+                "allocata tramite il modulo Imposta di Soggiorno. La distribuzione suggerita parte dalle "
                 "quote base decise dal comune, corrette da due segnali motivati e limitati a un massimo di "
                 f"{TETTO_CORRETTIVO_PUNTI} punti percentuali ciascuno: le criticità segnalate al Punto Informativo "
                 "Turistico, e lo scostamento tra quanto storicamente allocato e la quota base prevista per ciascun "
@@ -354,7 +361,11 @@ def get_matrice_redistribuzione(comune_id, anno, mese, valore_siti_helper, calco
         budget_qoe = get_budget_qoe_mese(comune_id, anno, mese, valore_siti_helper, calcola_range_mese_fn)
 
         ricchezza = suggerimento["ricchezza_estratta"]
-        incasso_totale = (ricchezza["gettito_soggiorno_mese"] or 0) + (ricchezza["valore_siti_culturali_lordo_mese"] or 0)
+        incasso_totale = (
+            (ricchezza["gettito_soggiorno_mese"] or 0)
+            + (ricchezza["valore_siti_culturali_lordo_mese"] or 0)
+            + (ricchezza.get("altre_entrate_turistiche_mese") or 0)
+        )
 
         segmenti = []
         for c in suggerimento["distribuzione_suggerita"]:
@@ -391,6 +402,7 @@ def get_matrice_redistribuzione(comune_id, anno, mese, valore_siti_helper, calco
             "incasso_totale": round(incasso_totale, 2),
             "gettito_soggiorno_mese": ricchezza["gettito_soggiorno_mese"],
             "valore_siti_culturali_lordo_mese": ricchezza["valore_siti_culturali_lordo_mese"],
+            "altre_entrate_turistiche_mese": ricchezza.get("altre_entrate_turistiche_mese"),
             "budget_qoe_totale": ricchezza["budget_qoe_riservato_mese"],
             "residuo_cittadino_totale": ricchezza["residuo_da_distribuire"],
             "gia_allocato_mese": ricchezza["gia_allocato_mese"],
@@ -398,9 +410,9 @@ def get_matrice_redistribuzione(comune_id, anno, mese, valore_siti_helper, calco
             "nota_metodologica": (
                 "Questa matrice non introduce nuovi calcoli: combina in un'unica vista i risultati già calcolati "
                 "dai moduli Compensazione Territoriale (welfare cittadino) e Qualità dell'Esperienza (welfare del "
-                "turista), a partire dallo stesso incasso totale (imposta di soggiorno più valore lordo dei siti "
-                "culturali del mese, eventi esclusi). Ogni segmento del grafico rimanda esattamente alla stessa "
-                "cifra mostrata nel modulo di origine."
+                "turista), a partire dallo stesso incasso totale (imposta di soggiorno, valore lordo dei siti "
+                "culturali ed eventuali altre entrate turistiche aggiuntive definite dal comune, eventi esclusi). "
+                "Ogni segmento del grafico rimanda esattamente alla stessa cifra mostrata nel modulo di origine."
             ),
         }
     except Exception as e:

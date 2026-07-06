@@ -34,6 +34,13 @@ from qualita_esperienza_service import (
     aggiorna_capitolo_qoe,
     get_budget_qoe_mese,
 )
+from entrate_aggiuntive_service import (
+    get_fonti_entrata,
+    crea_fonte_entrata,
+    elimina_fonte_entrata,
+    get_entrate_aggiuntive_mese,
+    crea_entrata_aggiuntiva,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -4919,3 +4926,28 @@ def endpoint_get_budget_qoe_mese(comune_id: str, anno: int, mese: int):
 @app.get("/matrice-redistribuzione/{comune_id}")
 def endpoint_get_matrice_redistribuzione(comune_id: str, anno: int, mese: int):
     return get_matrice_redistribuzione(comune_id, anno, mese, calcola_valore_siti_periodo, calcola_range_mese)
+
+
+@app.get("/entrate-aggiuntive/fonti/{comune_id}")
+def endpoint_get_fonti_entrata(comune_id: str):
+    return get_fonti_entrata(comune_id)
+
+
+@app.post("/entrate-aggiuntive/fonti")
+def endpoint_crea_fonte_entrata(payload: dict):
+    return crea_fonte_entrata(payload)
+
+
+@app.delete("/entrate-aggiuntive/fonti/{fonte_id}")
+def endpoint_elimina_fonte_entrata(fonte_id: int):
+    return elimina_fonte_entrata(fonte_id)
+
+
+@app.get("/entrate-aggiuntive/{comune_id}")
+def endpoint_get_entrate_aggiuntive_mese(comune_id: str, anno: int, mese: int):
+    return get_entrate_aggiuntive_mese(comune_id, anno, mese)
+
+
+@app.post("/entrate-aggiuntive")
+def endpoint_crea_entrata_aggiuntiva(payload: dict):
+    return crea_entrata_aggiuntiva(payload)
