@@ -36,6 +36,13 @@ def ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id_str):
     return creato_resp.data[0]
 
 
+def get_gettito_mese(comune_id, anno, mese):
+    piano = ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id)
+    gettito_resp = supabase.table("gettito_soggiorno").select("importo_incassato") \
+        .eq("piano_id", piano["id"]).eq("anno", anno).eq("mese", mese).execute()
+    return gettito_resp.data[0]["importo_incassato"] if gettito_resp.data else None
+
+
 def get_gettito_soggiorno(comune_id):
     try:
         piano = ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id)
