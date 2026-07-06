@@ -41,6 +41,13 @@ from entrate_aggiuntive_service import (
     get_entrate_aggiuntive_mese,
     crea_entrata_aggiuntiva,
 )
+from decoro_urbano_service import (
+    get_quota_decoro,
+    aggiorna_quota_decoro,
+    get_capitoli_decoro,
+    aggiorna_capitolo_decoro,
+    get_budget_decoro_mese,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -4951,3 +4958,28 @@ def endpoint_get_entrate_aggiuntive_mese(comune_id: str, anno: int, mese: int):
 @app.post("/entrate-aggiuntive")
 def endpoint_crea_entrata_aggiuntiva(payload: dict):
     return crea_entrata_aggiuntiva(payload)
+
+
+@app.get("/decoro-urbano/quota/{comune_id}")
+def endpoint_get_quota_decoro(comune_id: str):
+    return get_quota_decoro(comune_id)
+
+
+@app.put("/decoro-urbano/quota")
+def endpoint_aggiorna_quota_decoro(payload: dict):
+    return aggiorna_quota_decoro(payload)
+
+
+@app.get("/decoro-urbano/capitoli/{comune_id}")
+def endpoint_get_capitoli_decoro(comune_id: str):
+    return get_capitoli_decoro(comune_id)
+
+
+@app.put("/decoro-urbano/capitoli")
+def endpoint_aggiorna_capitolo_decoro(payload: dict):
+    return aggiorna_capitolo_decoro(payload)
+
+
+@app.get("/decoro-urbano/budget/{comune_id}")
+def endpoint_get_budget_decoro_mese(comune_id: str, anno: int, mese: int):
+    return get_budget_decoro_mese(comune_id, anno, mese, calcola_valore_siti_periodo, calcola_range_mese)
