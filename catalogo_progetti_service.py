@@ -46,7 +46,11 @@ def arricchisci_progetto(progetto, saldo_disponibile, versamento_medio_mensile):
     fondo_info = FONDI_VALIDI[progetto["fondo_origine"]]
     costo = progetto["costo_stimato"]
 
-    copertura_pct = round(min(max(saldo_disponibile, 0) / costo * 100, 100), 1) if costo > 0 else None
+    if progetto["stato"] in ("approvato", "completato") and progetto.get("copertura_approvazione_pct") is not None:
+        copertura_pct = progetto["copertura_approvazione_pct"]
+    else:
+        copertura_pct = round(min(max(saldo_disponibile, 0) / costo * 100, 100), 1) if costo > 0 else None
+
     tempo_accumulo_mesi = round(costo / versamento_medio_mensile, 1) if versamento_medio_mensile and versamento_medio_mensile > 0 else None
 
     unita_stimata = None
@@ -195,6 +199,7 @@ def approva_progetto(progetto_id):
         supabase.table("progetti_investimento").update({
             "stato": "approvato",
             "data_approvazione": datetime.now().isoformat(),
+            "copertura_approvazione_pct": copertura_pct,
         }).eq("id", progetto_id).execute()
 
         avviso = None
