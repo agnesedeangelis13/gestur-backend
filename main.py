@@ -89,6 +89,12 @@ from spazi_civici_service import (
     elimina_utilizzo_spazio,
     get_dashboard_spazi_civici,
 )
+from impronta_sociale_service import (
+    get_impronta_sociale,
+    get_coefficiente_moltiplicatore,
+    aggiorna_coefficiente_moltiplicatore,
+    get_valore_territoriale,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -5190,3 +5196,23 @@ def endpoint_elimina_utilizzo_spazio(utilizzo_id: int):
 @app.get("/spazi-civici/dashboard/{comune_id}")
 def endpoint_get_dashboard_spazi_civici(comune_id: str):
     return get_dashboard_spazi_civici(comune_id)
+
+
+@app.get("/impronta-sociale/{comune_id}")
+def endpoint_get_impronta_sociale(comune_id: str):
+    return get_impronta_sociale(comune_id)
+
+
+@app.get("/valore-territoriale/coefficiente/{comune_id}")
+def endpoint_get_coefficiente_moltiplicatore(comune_id: str):
+    return get_coefficiente_moltiplicatore(comune_id)
+
+
+@app.put("/valore-territoriale/coefficiente")
+def endpoint_aggiorna_coefficiente_moltiplicatore(payload: dict):
+    return aggiorna_coefficiente_moltiplicatore(payload)
+
+
+@app.get("/valore-territoriale/{comune_id}")
+def endpoint_get_valore_territoriale(comune_id: str):
+    return get_valore_territoriale(comune_id, calcola_valore_siti_periodo)
