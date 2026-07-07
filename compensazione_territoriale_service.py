@@ -9,6 +9,7 @@ from imposta_soggiorno_service import (
 from qualita_esperienza_service import get_budget_qoe_mese_totale, get_budget_qoe_mese
 from entrate_aggiuntive_service import get_totale_altre_entrate_mese
 from decoro_urbano_service import get_budget_decoro_mese_totale, get_budget_decoro_mese
+from fondo_sostenibilita_service import get_budget_sostenibilita_mese_totale, get_anteprima_mese
 
 load_dotenv()
 
@@ -248,12 +249,13 @@ def get_ricchezza_estratta_mese(comune_id, anno, mese, valore_siti_helper):
     dati_disponibili = gettito_mese is not None or valore_siti_lordo_mese is not None or altre_entrate_mese is not None
     incasso_totale_lordo = (gettito_mese or 0) + (valore_siti_lordo_mese or 0) + (altre_entrate_mese or 0) if dati_disponibili else None
     budget_decoro_mese = get_budget_decoro_mese_totale(incasso_totale_lordo, comune_id) if incasso_totale_lordo else 0
+    budget_sostenibilita_mese = get_budget_sostenibilita_mese_totale(incasso_totale_lordo, comune_id) if incasso_totale_lordo else 0
 
     allocazioni_resp = supabase.table("allocazioni_soggiorno").select("importo_allocato") \
         .eq("piano_id", piano["id"]).eq("anno", anno).eq("mese", mese).eq("attivo", True).execute()
     gia_allocato_mese = sum(a["importo_allocato"] or 0 for a in (allocazioni_resp.data or []))
 
-    ricchezza_totale = (gettito_mese or 0) + (valore_siti_netto_mese or 0) + (altre_entrate_mese or 0) - budget_decoro_mese
+    ricchezza_totale = (gettito_mese or 0) + (valore_siti_netto_mese or 0) + (altre_entrate_mese or 0) - budget_decoro_mese - budget_sostenibilita_mese
 
     return {
         "piano_id": piano["id"],
@@ -262,6 +264,7 @@ def get_ricchezza_estratta_mese(comune_id, anno, mese, valore_siti_helper):
         "altre_entrate_turistiche_mese": altre_entrate_mese,
         "budget_qoe_riservato_mese": budget_qoe_mese,
         "budget_decoro_riservato_mese": budget_decoro_mese,
+        "budget_sostenibilita_riservato_mese": budget_sostenibilita_mese,
         "valore_siti_culturali_mese": valore_siti_netto_mese,
         "ricchezza_totale_mese": round(ricchezza_totale, 2) if dati_disponibili else None,
         "gia_allocato_mese": round(gia_allocato_mese, 2),
@@ -337,15 +340,16 @@ def get_suggerimento_distribuzione(comune_id, anno, mese, valore_siti_helper):
             "nota_metodologica": (
                 "La ricchezza estratta somma il gettito dell'imposta di soggiorno del mese, il valore economico "
                 "netto dei siti culturali nello stesso mese (biglietteria, bookshop, ristorazione collegati alla "
-                "visita, al netto di quanto già riservato al reinvestimento in Qualità dell'Esperienza e al "
-                "Decoro Urbano e Vivibilità) e le eventuali altre entrate turistiche aggiuntive definite dal "
-                "comune (es. parcheggi, ticket bus); gli eventi locali non sono inclusi. Il residuo da distribuire "
-                "è la ricchezza del mese non ancora allocata tramite il modulo Imposta di Soggiorno. La "
-                "distribuzione suggerita riguarda i 6 capitoli non vincolati altrove, e parte dalle "
-                "quote base decise dal comune, corrette da due segnali motivati e limitati a un massimo di "
-                f"{TETTO_CORRETTIVO_PUNTI} punti percentuali ciascuno: le criticità segnalate al Punto Informativo "
-                "Turistico, e lo scostamento tra quanto storicamente allocato e la quota base prevista per ciascun "
-                "capitolo. Il suggerimento non è vincolante: resta una proposta motivata, non una decisione automatica."
+                "visita, al netto di quanto già riservato al reinvestimento in Qualità dell'Esperienza, al "
+                "Decoro Urbano e Vivibilità e al Fondo di Rigenerazione Sostenibile) e le eventuali altre entrate "
+                "turistiche aggiuntive definite dal comune (es. parcheggi, ticket bus); gli eventi locali non "
+                "sono inclusi. Il residuo da distribuire è la ricchezza del mese non ancora allocata tramite il "
+                "modulo Imposta di Soggiorno. La distribuzione suggerita riguarda i 6 capitoli non vincolati "
+                "altrove, e parte dalle quote base decise dal comune, corrette da due segnali motivati e limitati "
+                f"a un massimo di {TETTO_CORRETTIVO_PUNTI} punti percentuali ciascuno: le criticità segnalate al "
+                "Punto Informativo Turistico, e lo scostamento tra quanto storicamente allocato e la quota base "
+                "prevista per ciascun capitolo. Il suggerimento non è vincolante: resta una proposta motivata, "
+                "non una decisione automatica."
             ),
         }
     except Exception as e:
@@ -369,6 +373,7 @@ def get_matrice_redistribuzione(comune_id, anno, mese, valore_siti_helper, calco
 
         budget_qoe = get_budget_qoe_mese(comune_id, anno, mese, valore_siti_helper, calcola_range_mese_fn)
         budget_decoro = get_budget_decoro_mese(comune_id, anno, mese, valore_siti_helper, calcola_range_mese_fn)
+        anteprima_sostenibilita = get_anteprima_mese(comune_id, anno, mese, valore_siti_helper, calcola_range_mese_fn)
 
         ricchezza = suggerimento["ricchezza_estratta"]
         incasso_totale = (
@@ -404,6 +409,15 @@ def get_matrice_redistribuzione(comune_id, anno, mese, valore_siti_helper, calco
                         "dominio": "decoro_urbano",
                     })
 
+        if anteprima_sostenibilita.get("dati_sufficienti"):
+            for c in anteprima_sostenibilita["distribuzione_capitoli"]:
+                if c["importo_potenziale"] > 0:
+                    segmenti.append({
+                        "nome": c["nome"],
+                        "importo": c["importo_potenziale"],
+                        "dominio": "fondo_sostenibilita",
+                    })
+
         if ricchezza["gia_allocato_mese"] > 0:
             segmenti.append({
                 "nome": "Già allocato (Imposta di Soggiorno)",
@@ -424,16 +438,17 @@ def get_matrice_redistribuzione(comune_id, anno, mese, valore_siti_helper, calco
             "altre_entrate_turistiche_mese": ricchezza.get("altre_entrate_turistiche_mese"),
             "budget_qoe_totale": ricchezza["budget_qoe_riservato_mese"],
             "budget_decoro_totale": ricchezza["budget_decoro_riservato_mese"],
+            "budget_sostenibilita_totale": ricchezza["budget_sostenibilita_riservato_mese"],
             "residuo_cittadino_totale": ricchezza["residuo_da_distribuire"],
             "gia_allocato_mese": ricchezza["gia_allocato_mese"],
             "segmenti": segmenti,
             "nota_metodologica": (
                 "Questa matrice non introduce nuovi calcoli: combina in un'unica vista i risultati già calcolati "
                 "dai moduli Compensazione Territoriale (welfare cittadino), Qualità dell'Esperienza (welfare del "
-                "turista) e Decoro Urbano e Vivibilità (manutenzione e decoro), a partire dallo stesso incasso "
-                "totale (imposta di soggiorno, valore lordo dei siti culturali ed eventuali altre entrate "
-                "turistiche aggiuntive definite dal comune, eventi esclusi). Ogni segmento del grafico rimanda "
-                "esattamente alla stessa cifra mostrata nel modulo di origine."
+                "turista), Decoro Urbano e Vivibilità (manutenzione e decoro) e Fondo di Rigenerazione Sostenibile "
+                "(ambiente), a partire dallo stesso incasso totale (imposta di soggiorno, valore lordo dei siti "
+                "culturali ed eventuali altre entrate turistiche aggiuntive definite dal comune, eventi esclusi). "
+                "Ogni segmento del grafico rimanda esattamente alla stessa cifra mostrata nel modulo di origine."
             ),
         }
     except Exception as e:

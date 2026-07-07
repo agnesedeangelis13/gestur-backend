@@ -48,6 +48,15 @@ from decoro_urbano_service import (
     aggiorna_capitolo_decoro,
     get_budget_decoro_mese,
 )
+from fondo_sostenibilita_service import (
+    get_quota_sostenibilita,
+    aggiorna_quota_sostenibilita,
+    get_capitoli_sostenibilita,
+    aggiorna_capitolo_sostenibilita,
+    get_anteprima_mese,
+    registra_versamento_mese,
+    get_saldo_fondo,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -4983,3 +4992,41 @@ def endpoint_aggiorna_capitolo_decoro(payload: dict):
 @app.get("/decoro-urbano/budget/{comune_id}")
 def endpoint_get_budget_decoro_mese(comune_id: str, anno: int, mese: int):
     return get_budget_decoro_mese(comune_id, anno, mese, calcola_valore_siti_periodo, calcola_range_mese)
+
+
+@app.get("/fondo-sostenibilita/quota/{comune_id}")
+def endpoint_get_quota_sostenibilita(comune_id: str):
+    return get_quota_sostenibilita(comune_id)
+
+
+@app.put("/fondo-sostenibilita/quota")
+def endpoint_aggiorna_quota_sostenibilita(payload: dict):
+    return aggiorna_quota_sostenibilita(payload)
+
+
+@app.get("/fondo-sostenibilita/capitoli/{comune_id}")
+def endpoint_get_capitoli_sostenibilita(comune_id: str):
+    return get_capitoli_sostenibilita(comune_id)
+
+
+@app.put("/fondo-sostenibilita/capitoli")
+def endpoint_aggiorna_capitolo_sostenibilita(payload: dict):
+    return aggiorna_capitolo_sostenibilita(payload)
+
+
+@app.get("/fondo-sostenibilita/anteprima/{comune_id}")
+def endpoint_get_anteprima_mese(comune_id: str, anno: int, mese: int):
+    return get_anteprima_mese(comune_id, anno, mese, calcola_valore_siti_periodo, calcola_range_mese)
+
+
+@app.post("/fondo-sostenibilita/registra-versamento")
+def endpoint_registra_versamento_mese(payload: dict):
+    comune_id = payload.get("comune_id")
+    anno = payload.get("anno")
+    mese = payload.get("mese")
+    return registra_versamento_mese(comune_id, anno, mese, calcola_valore_siti_periodo, calcola_range_mese)
+
+
+@app.get("/fondo-sostenibilita/saldo/{comune_id}")
+def endpoint_get_saldo_fondo(comune_id: str):
+    return get_saldo_fondo(comune_id)
