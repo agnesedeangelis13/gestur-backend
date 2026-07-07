@@ -73,6 +73,13 @@ from civic_pricing_service import (
     elimina_categoria_civic_pricing,
     simula_impatto_civic_pricing,
 )
+from costo_inazione_service import (
+    simula_scenario_investimento,
+    get_indice_rischio_welfare,
+    crea_risorsa_valore_perso,
+    get_risorse_valore_perso,
+    elimina_risorsa_valore_perso,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -5114,3 +5121,28 @@ def endpoint_simula_impatto_civic_pricing(payload: dict):
 @app.get("/siti-comune/{comune_id}")
 def endpoint_ottieni_siti_comune(comune_id: str):
     return ottieni_siti_comune(comune_id)
+
+
+@app.post("/costo-inazione/simula-scenario")
+def endpoint_simula_scenario_investimento(payload: dict):
+    return simula_scenario_investimento(payload, calcola_valore_siti_periodo)
+
+
+@app.get("/costo-inazione/indice-rischio-welfare/{comune_id}")
+def endpoint_get_indice_rischio_welfare(comune_id: str):
+    return get_indice_rischio_welfare(comune_id)
+
+
+@app.post("/costo-inazione/valore-perso")
+def endpoint_crea_risorsa_valore_perso(payload: dict):
+    return crea_risorsa_valore_perso(payload)
+
+
+@app.get("/costo-inazione/valore-perso/{comune_id}")
+def endpoint_get_risorse_valore_perso(comune_id: str):
+    return get_risorse_valore_perso(comune_id, calcola_valore_siti_periodo)
+
+
+@app.delete("/costo-inazione/valore-perso/{risorsa_id}")
+def endpoint_elimina_risorsa_valore_perso(risorsa_id: int):
+    return elimina_risorsa_valore_perso(risorsa_id)
