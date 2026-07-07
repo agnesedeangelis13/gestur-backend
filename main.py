@@ -80,6 +80,15 @@ from costo_inazione_service import (
     get_risorse_valore_perso,
     elimina_risorsa_valore_perso,
 )
+from spazi_civici_service import (
+    get_spazi_civici,
+    crea_spazio_civico,
+    elimina_spazio_civico,
+    crea_utilizzo_spazio,
+    get_utilizzi_spazio,
+    elimina_utilizzo_spazio,
+    get_dashboard_spazi_civici,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -5146,3 +5155,38 @@ def endpoint_get_risorse_valore_perso(comune_id: str):
 @app.delete("/costo-inazione/valore-perso/{risorsa_id}")
 def endpoint_elimina_risorsa_valore_perso(risorsa_id: int):
     return elimina_risorsa_valore_perso(risorsa_id)
+
+
+@app.get("/spazi-civici/{comune_id}")
+def endpoint_get_spazi_civici(comune_id: str):
+    return get_spazi_civici(comune_id)
+
+
+@app.post("/spazi-civici")
+def endpoint_crea_spazio_civico(payload: dict):
+    return crea_spazio_civico(payload)
+
+
+@app.delete("/spazi-civici/{spazio_id}")
+def endpoint_elimina_spazio_civico(spazio_id: int):
+    return elimina_spazio_civico(spazio_id)
+
+
+@app.post("/spazi-civici/utilizzi")
+def endpoint_crea_utilizzo_spazio(payload: dict):
+    return crea_utilizzo_spazio(payload)
+
+
+@app.get("/spazi-civici/utilizzi/{spazio_id}")
+def endpoint_get_utilizzi_spazio(spazio_id: int):
+    return get_utilizzi_spazio(spazio_id)
+
+
+@app.delete("/spazi-civici/utilizzi/{utilizzo_id}")
+def endpoint_elimina_utilizzo_spazio(utilizzo_id: int):
+    return elimina_utilizzo_spazio(utilizzo_id)
+
+
+@app.get("/spazi-civici/dashboard/{comune_id}")
+def endpoint_get_dashboard_spazi_civici(comune_id: str):
+    return get_dashboard_spazi_civici(comune_id)
