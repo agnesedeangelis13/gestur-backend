@@ -318,3 +318,66 @@ def get_budget_decoro_mese(comune_id, anno, mese, valore_siti_helper, calcola_ra
     except Exception as e:
         print(f"Errore budget decoro comune {comune_id}: {e}")
         return {"errore": str(e)}
+
+
+def registra_versamento_mese_decoro(comune_id, anno, mese, valore_siti_helper, calcola_range_mese_fn):
+    try:
+        anteprima = get_budget_decoro_mese(comune_id, anno, mese, valore_siti_helper, calcola_range_mese_fn)
+        if "errore" in anteprima:
+            return {"errore": anteprima["errore"]}
+        if not anteprima["dati_sufficienti"]:
+            return {"errore": anteprima["messaggio"]}
+
+        piano = ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id)
+
+        record = {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "anno": anno,
+            "mese": mese,
+            "importo_versato": anteprima["budget_totale_decoro"],
+            "da_soggiorno": anteprima["gettito_soggiorno_mese"],
+            "da_siti": anteprima["valore_siti_culturali_lordo_mese"],
+            "da_altre_entrate": anteprima.get("altre_entrate_turistiche_mese"),
+        }
+        supabase.table("decoro_urbano_versamenti").upsert(
+            record, on_conflict="piano_id,anno,mese"
+        ).execute()
+
+        return {"status": "registrato", "importo_versato": anteprima["budget_totale_decoro"]}
+    except Exception as e:
+        print(f"Errore registrazione versamento decoro comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+def get_saldo_decoro(comune_id):
+    try:
+        piano = ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id)
+
+        versamenti_resp = supabase.table("decoro_urbano_versamenti").select("*") \
+            .eq("piano_id", piano["id"]).order("anno").order("mese").execute()
+        versamenti = versamenti_resp.data or []
+
+        saldo_totale = sum(v["importo_versato"] or 0 for v in versamenti)
+        totale_da_soggiorno = sum(v["da_soggiorno"] or 0 for v in versamenti if v.get("da_soggiorno"))
+        totale_da_siti = sum(v["da_siti"] or 0 for v in versamenti if v.get("da_siti"))
+        totale_da_altre_entrate = sum(v["da_altre_entrate"] or 0 for v in versamenti if v.get("da_altre_entrate"))
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "saldo_totale": round(saldo_totale, 2),
+            "totale_da_soggiorno": round(totale_da_soggiorno, 2),
+            "totale_da_siti": round(totale_da_siti, 2),
+            "totale_da_altre_entrate": round(totale_da_altre_entrate, 2),
+            "n_mesi_registrati": len(versamenti),
+            "versamenti": versamenti,
+            "nota_metodologica": (
+                "Il saldo somma tutti i versamenti mensili registrati esplicitamente nel fondo. Registrare un "
+                "mese è un'azione volontaria: finché non viene confermato, il mese non entra nel saldo "
+                "accumulato, anche se la cifra è già visibile in anteprima."
+            ),
+        }
+    except Exception as e:
+        print(f"Errore saldo decoro comune {comune_id}: {e}")
+        return {"errore": str(e)}

@@ -47,6 +47,8 @@ from decoro_urbano_service import (
     get_capitoli_decoro,
     aggiorna_capitolo_decoro,
     get_budget_decoro_mese,
+    registra_versamento_mese_decoro,
+    get_saldo_decoro,
 )
 from fondo_sostenibilita_service import (
     get_quota_sostenibilita,
@@ -56,6 +58,13 @@ from fondo_sostenibilita_service import (
     get_anteprima_mese,
     registra_versamento_mese,
     get_saldo_fondo,
+)
+from catalogo_progetti_service import (
+    crea_progetto,
+    get_progetti,
+    approva_progetto,
+    completa_progetto,
+    elimina_progetto,
 )
 load_dotenv()
 
@@ -4994,6 +5003,19 @@ def endpoint_get_budget_decoro_mese(comune_id: str, anno: int, mese: int):
     return get_budget_decoro_mese(comune_id, anno, mese, calcola_valore_siti_periodo, calcola_range_mese)
 
 
+@app.post("/decoro-urbano/registra-versamento")
+def endpoint_registra_versamento_mese_decoro(payload: dict):
+    comune_id = payload.get("comune_id")
+    anno = payload.get("anno")
+    mese = payload.get("mese")
+    return registra_versamento_mese_decoro(comune_id, anno, mese, calcola_valore_siti_periodo, calcola_range_mese)
+
+
+@app.get("/decoro-urbano/saldo/{comune_id}")
+def endpoint_get_saldo_decoro(comune_id: str):
+    return get_saldo_decoro(comune_id)
+
+
 @app.get("/fondo-sostenibilita/quota/{comune_id}")
 def endpoint_get_quota_sostenibilita(comune_id: str):
     return get_quota_sostenibilita(comune_id)
@@ -5030,3 +5052,28 @@ def endpoint_registra_versamento_mese(payload: dict):
 @app.get("/fondo-sostenibilita/saldo/{comune_id}")
 def endpoint_get_saldo_fondo(comune_id: str):
     return get_saldo_fondo(comune_id)
+
+
+@app.post("/catalogo-progetti")
+def endpoint_crea_progetto(payload: dict):
+    return crea_progetto(payload)
+
+
+@app.get("/catalogo-progetti/{comune_id}")
+def endpoint_get_progetti(comune_id: str, fondo_origine: str = None, stato: str = None):
+    return get_progetti(comune_id, fondo_origine, stato)
+
+
+@app.put("/catalogo-progetti/{progetto_id}/approva")
+def endpoint_approva_progetto(progetto_id: int):
+    return approva_progetto(progetto_id)
+
+
+@app.put("/catalogo-progetti/{progetto_id}/completa")
+def endpoint_completa_progetto(progetto_id: int):
+    return completa_progetto(progetto_id)
+
+
+@app.delete("/catalogo-progetti/{progetto_id}")
+def endpoint_elimina_progetto(progetto_id: int):
+    return elimina_progetto(progetto_id)
