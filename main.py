@@ -95,6 +95,11 @@ from impronta_sociale_service import (
     aggiorna_coefficiente_moltiplicatore,
     get_valore_territoriale,
 )
+from maslow_service import (
+    get_mappatura_capitoli,
+    aggiorna_mappatura_capitolo,
+    get_piramide_maslow,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -5216,3 +5221,18 @@ def endpoint_aggiorna_coefficiente_moltiplicatore(payload: dict):
 @app.get("/valore-territoriale/{comune_id}")
 def endpoint_get_valore_territoriale(comune_id: str):
     return get_valore_territoriale(comune_id, calcola_valore_siti_periodo)
+
+
+@app.get("/maslow/mappatura/{comune_id}")
+def endpoint_get_mappatura_capitoli(comune_id: str):
+    return get_mappatura_capitoli(comune_id)
+
+
+@app.put("/maslow/mappatura")
+def endpoint_aggiorna_mappatura_capitolo(payload: dict):
+    return aggiorna_mappatura_capitolo(payload)
+
+
+@app.get("/maslow/piramide/{comune_id}")
+def endpoint_get_piramide_maslow(comune_id: str):
+    return get_piramide_maslow(comune_id)
