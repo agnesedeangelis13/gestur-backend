@@ -66,6 +66,13 @@ from catalogo_progetti_service import (
     completa_progetto,
     elimina_progetto,
 )
+from civic_pricing_service import (
+    get_giorni_bassa_affluenza,
+    get_categorie_civic_pricing,
+    crea_categoria_civic_pricing,
+    elimina_categoria_civic_pricing,
+    simula_impatto_civic_pricing,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -5077,3 +5084,33 @@ def endpoint_completa_progetto(progetto_id: int):
 @app.delete("/catalogo-progetti/{progetto_id}")
 def endpoint_elimina_progetto(progetto_id: int):
     return elimina_progetto(progetto_id)
+
+
+@app.get("/civic-pricing/giorni-bassa-affluenza/{sito_id}")
+def endpoint_get_giorni_bassa_affluenza(sito_id: int, orizzonte_giorni: int = 30):
+    return get_giorni_bassa_affluenza(sito_id, orizzonte_giorni)
+
+
+@app.get("/civic-pricing/categorie/{sito_id}")
+def endpoint_get_categorie_civic_pricing(sito_id: int):
+    return get_categorie_civic_pricing(sito_id)
+
+
+@app.post("/civic-pricing/categorie")
+def endpoint_crea_categoria_civic_pricing(payload: dict):
+    return crea_categoria_civic_pricing(payload)
+
+
+@app.delete("/civic-pricing/categorie/{categoria_id}")
+def endpoint_elimina_categoria_civic_pricing(categoria_id: int):
+    return elimina_categoria_civic_pricing(categoria_id)
+
+
+@app.post("/civic-pricing/simula")
+def endpoint_simula_impatto_civic_pricing(payload: dict):
+    return simula_impatto_civic_pricing(payload)
+
+
+@app.get("/siti-comune/{comune_id}")
+def endpoint_ottieni_siti_comune(comune_id: str):
+    return ottieni_siti_comune(comune_id)
