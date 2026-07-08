@@ -323,7 +323,13 @@ def get_tariffe(sito_id: int):
             "percentuale_bookshop, spesa_media_bookshop, "
             "percentuale_ristorazione, spesa_media_ristorazione"
         ).eq("id", sito_id).single().execute()
-        return data.data
+        tariffe = data.data
+        if tariffe:
+            prezzo_medio_risultato = calcola_prezzo_medio_effettivo(sito_id, tariffe)
+            tariffe["prezzo_medio_effettivo"] = prezzo_medio_risultato["prezzo_medio"]
+            tariffe["metodo_prezzo_medio"] = prezzo_medio_risultato["metodo"]
+            tariffe["n_persone_reali_considerate"] = prezzo_medio_risultato["n_persone_reali_considerate"]
+        return tariffe
     except Exception as e:
         return {"errore": str(e)}
 
@@ -382,6 +388,46 @@ def calcola_composizione_giorno(dati_storici, giorno_settimana):
         for k, v in composizione.items()
     ]
 
+SOGLIA_MIN_PERSONE_REALI_PREZZO_MEDIO = 20
+
+
+def calcola_prezzo_medio_effettivo(sito_id, tariffe, giorni_lookback=90):
+    limite_data = (datetime.now() - timedelta(days=giorni_lookback)).strftime("%Y-%m-%d")
+    storico_resp = supabase.table("presenza").select("dettaglio_biglietti") \
+        .eq("sito_id", sito_id).gte("data", limite_data).execute()
+    righe = storico_resp.data or []
+
+    categorie_resp = supabase.table("categorie_biglietto").select("id, prezzo").eq("sito_id", sito_id).execute()
+    prezzi_categorie = {c["id"]: c["prezzo"] for c in (categorie_resp.data or [])}
+
+    totale_persone = 0
+    totale_valore = 0
+    for r in righe:
+        dettaglio = r.get("dettaglio_biglietti")
+        if not dettaglio:
+            continue
+        for voce in dettaglio:
+            n = voce.get("n_persone") or 0
+            prezzo = prezzi_categorie.get(voce.get("categoria_biglietto_id"))
+            if prezzo is not None:
+                totale_persone += n
+                totale_valore += n * prezzo
+
+    if totale_persone >= SOGLIA_MIN_PERSONE_REALI_PREZZO_MEDIO:
+        return {
+            "prezzo_medio": round(totale_valore / totale_persone, 2),
+            "metodo": "reale",
+            "n_persone_reali_considerate": totale_persone,
+        }
+
+    prezzo_stimato = tariffe["prezzo_biglietto"] * (1 - tariffe["percentuale_ridotti"] / 100) + tariffe["prezzo_ridotto"] * (tariffe["percentuale_ridotti"] / 100)
+    return {
+        "prezzo_medio": round(prezzo_stimato, 2),
+        "metodo": "stima_statistica",
+        "n_persone_reali_considerate": totale_persone,
+    }
+
+
 @app.get("/previsioni-economiche/{sito_id}")
 def previsioni_economiche(sito_id: str, giorni: int = 14):
     try:
@@ -413,6 +459,9 @@ def previsioni_economiche(sito_id: str, giorni: int = 14):
         if not previsioni_aff:
             return {"errore": "Nessuna previsione di affluenza disponibile per questo sito"}
 
+        prezzo_medio_risultato = calcola_prezzo_medio_effettivo(sito_id_int, tariffe)
+        prezzo_medio = prezzo_medio_risultato["prezzo_medio"]
+
         risultati = []
         for p in previsioni_aff:
             data_str = p["data_previsione"]
@@ -430,7 +479,6 @@ def previsioni_economiche(sito_id: str, giorni: int = 14):
                 chiave = (comp["fascia"], comp["provenienza_macro"], comp["tipo_visitatore"])
                 coeff = coefficienti.get(chiave, 1.0)
 
-                prezzo_medio = tariffe["prezzo_biglietto"] * (1 - tariffe["percentuale_ridotti"]/100) + tariffe["prezzo_ridotto"] * (tariffe["percentuale_ridotti"]/100)
                 bookshop_base = (tariffe["percentuale_bookshop"]/100) * tariffe["spesa_media_bookshop"]
                 ristorazione_base = (tariffe["percentuale_ristorazione"]/100) * tariffe["spesa_media_ristorazione"]
 
@@ -467,7 +515,14 @@ def previsioni_economiche(sito_id: str, giorni: int = 14):
                 "composizione_dominante": composizione_dominante,
             }, on_conflict="sito_id,data").execute()
 
-        return {"sito_id": sito_id_int, "nome_sito": tariffe["nome_sito"], "previsioni": risultati}
+        return {
+            "sito_id": sito_id_int,
+            "nome_sito": tariffe["nome_sito"],
+            "previsioni": risultati,
+            "prezzo_medio_utilizzato": prezzo_medio,
+            "metodo_prezzo_medio": prezzo_medio_risultato["metodo"],
+            "n_persone_reali_considerate": prezzo_medio_risultato["n_persone_reali_considerate"],
+        }
 
     except Exception as e:
         print(f"Errore previsioni economiche sito {sito_id}: {e}")
