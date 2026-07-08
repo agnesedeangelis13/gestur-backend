@@ -2567,6 +2567,8 @@ def calcola_valore_siti_periodo(comune_id, data_inizio_str, data_fine_str):
     valore_totale_biglietti = 0
     valore_totale_commerciale = 0
     n_siti_con_dati = 0
+    n_presenze_con_dato_reale = 0
+    n_presenze_stimate = 0
 
     for sito_id in sito_ids:
         tariffe_resp = supabase.table("siti_culturali").select(
@@ -2581,7 +2583,10 @@ def calcola_valore_siti_periodo(comune_id, data_inizio_str, data_fine_str):
         coeff_resp = supabase.table("coefficienti_spesa").select("*").eq("sito_id", sito_id).execute()
         coefficienti = {(c["fascia"], c["provenienza_macro"], c["tipo_visitatore"]): c["coefficiente"] for c in coeff_resp.data}
 
-        storico_resp = supabase.table("presenza").select("data, gruppo, fasce, provenienza, tipo_visitatore") \
+        categorie_resp = supabase.table("categorie_biglietto").select("id, prezzo").eq("sito_id", sito_id).execute()
+        prezzi_categorie = {c["id"]: c["prezzo"] for c in (categorie_resp.data or [])}
+
+        storico_resp = supabase.table("presenza").select("data, gruppo, fasce, provenienza, tipo_visitatore, dettaglio_biglietti") \
             .eq("sito_id", sito_id).gte("data", data_inizio_str).lte("data", data_fine_str).execute()
         storico = storico_resp.data
         if not storico:
@@ -2601,9 +2606,21 @@ def calcola_valore_siti_periodo(comune_id, data_inizio_str, data_fine_str):
             prov_macro = mappa_provenienza_macro(r.get("provenienza"))
             per_fascia = n_persone / len(fasce)
 
+            dettaglio = r.get("dettaglio_biglietti")
+            if dettaglio:
+                valore_riga_biglietti = 0
+                for voce in dettaglio:
+                    n_cat = voce.get("n_persone") or 0
+                    prezzo_cat = prezzi_categorie.get(voce.get("categoria_biglietto_id"))
+                    valore_riga_biglietti += n_cat * (prezzo_cat if prezzo_cat is not None else prezzo_medio)
+                valore_totale_biglietti += valore_riga_biglietti
+                n_presenze_con_dato_reale += 1
+            else:
+                valore_totale_biglietti += n_persone * prezzo_medio
+                n_presenze_stimate += 1
+
             for f in fasce:
                 coeff = coefficienti.get((f, prov_macro, tipo), 1.0)
-                valore_totale_biglietti += per_fascia * prezzo_medio
                 valore_totale_commerciale += per_fascia * (bookshop_base + ristorazione_base) * coeff
 
     if n_siti_con_dati == 0:
@@ -2614,6 +2631,8 @@ def calcola_valore_siti_periodo(comune_id, data_inizio_str, data_fine_str):
         "valore_biglietti": round(valore_totale_biglietti, 2),
         "valore_commerciale": round(valore_totale_commerciale, 2),
         "valore_totale": round(valore_totale_biglietti + valore_totale_commerciale, 2),
+        "n_presenze_con_dato_reale": n_presenze_con_dato_reale,
+        "n_presenze_stimate": n_presenze_stimate,
     }
 
 
@@ -2635,6 +2654,10 @@ def get_dimensione_economica(comune_id: str):
         valore_totale_biglietti = risultato["valore_biglietti"]
         valore_totale_commerciale = risultato["valore_commerciale"]
         valore_totale = risultato["valore_totale"]
+        n_reale = risultato.get("n_presenze_con_dato_reale", 0)
+        n_stimate = risultato.get("n_presenze_stimate", 0)
+        n_presenze_totali = n_reale + n_stimate
+        quota_reale_pct = round(n_reale / n_presenze_totali * 100, 1) if n_presenze_totali > 0 else 0
 
         return {
             "comune_id": comune_id,
@@ -2643,15 +2666,24 @@ def get_dimensione_economica(comune_id: str):
             "valore_biglietti": round(valore_totale_biglietti, 2),
             "valore_commerciale": round(valore_totale_commerciale, 2),
             "valore_totale_generato": valore_totale,
+            "n_presenze_con_dato_reale": n_reale,
+            "n_presenze_stimate": n_stimate,
+            "quota_dato_reale_pct": quota_reale_pct,
             "dato_sottostante": (
                 f"Valore stimato sugli ultimi 12 mesi su {n_siti_con_dati} sito/i: €{round(valore_totale_biglietti, 0):.0f} "
                 f"da biglietteria, €{round(valore_totale_commerciale, 0):.0f} da bookshop e ristorazione collegati alla visita, "
-                f"per un totale di €{valore_totale:.0f}."
+                f"per un totale di €{valore_totale:.0f}. La parte biglietteria si basa su dato reale (categoria di "
+                f"biglietto registrata) per il {quota_reale_pct}% delle presenze del periodo, sulla stima statistica "
+                "per il resto."
             ),
             "nota_metodologica": (
-                "Il valore è stimato applicando alle presenze reali registrate le stesse tariffe e gli stessi "
-                "coefficienti di spesa per fascia/provenienza/tipo visitatore già usati nelle previsioni economiche "
-                "del sito: è una stima retrospettiva, non un dato di cassa effettivo."
+                "Il valore di biglietteria usa il prezzo realmente registrato quando la presenza riporta il "
+                "dettaglio per categoria di biglietto (intero/ridotto/gratuito configurato sul sito); quando "
+                "quel dettaglio manca (presenze storiche precedenti, o siti senza categorie configurate), applica "
+                "la stima statistica basata su prezzo pieno/ridotto e percentuale di ridotti del sito. Il valore "
+                "commerciale (bookshop, ristorazione) resta sempre stimato tramite gli stessi coefficienti di "
+                "spesa per fascia/provenienza/tipo visitatore: non esiste ancora un dato reale di spesa "
+                "accessoria. Nessuna cifra qui è un dato di cassa effettivo."
             ),
         }
     except Exception as e:
