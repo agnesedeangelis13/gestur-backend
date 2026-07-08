@@ -121,11 +121,12 @@ from pacchetti_service import (
     suggerisci_giorni_pacchetto,
     crea_pacchetto,
     get_pacchetti,
-    approva_pacchetto,
-    completa_pacchetto,
-    elimina_pacchetto,
+    cambia_stato_pacchetto,
+    salva_consuntivo_pacchetto,
     get_statistiche_pacchetti,
     get_storico_pacchetti,
+    get_altri_luoghi,
+    crea_altro_luogo,
 )
 load_dotenv()
 
@@ -5432,21 +5433,14 @@ def endpoint_get_pacchetti(comune_id: str, stato: str = None):
     return get_pacchetti(comune_id, stato)
 
 
-@app.put("/pacchetti/{pacchetto_id}/approva")
-def endpoint_approva_pacchetto(pacchetto_id: int):
-    return approva_pacchetto(pacchetto_id)
+@app.put("/pacchetti/{pacchetto_id}/stato")
+def endpoint_cambia_stato_pacchetto(pacchetto_id: int, payload: dict):
+    return cambia_stato_pacchetto(pacchetto_id, payload.get("stato"))
 
 
-@app.put("/pacchetti/{pacchetto_id}/completa")
-def endpoint_completa_pacchetto(pacchetto_id: int, payload: dict = None):
-    margine = payload.get("margine_netto_reale") if payload else None
-    partecipanti = payload.get("n_partecipanti") if payload else None
-    return completa_pacchetto(pacchetto_id, margine, partecipanti)
-
-
-@app.delete("/pacchetti/{pacchetto_id}")
-def endpoint_elimina_pacchetto(pacchetto_id: int):
-    return elimina_pacchetto(pacchetto_id)
+@app.put("/pacchetti/{pacchetto_id}/consuntivo")
+def endpoint_salva_consuntivo_pacchetto(pacchetto_id: int, payload: dict):
+    return salva_consuntivo_pacchetto(pacchetto_id, payload.get("margine_netto_reale"), payload.get("n_partecipanti"))
 
 
 @app.get("/pacchetti-statistiche/{comune_id}")
@@ -5457,3 +5451,13 @@ def endpoint_get_statistiche_pacchetti(comune_id: str):
 @app.get("/pacchetti-storico/{comune_id}")
 def endpoint_get_storico_pacchetti(comune_id: str):
     return get_storico_pacchetti(comune_id)
+
+
+@app.get("/pacchetti/luoghi/{comune_id}")
+def endpoint_get_altri_luoghi(comune_id: str):
+    return get_altri_luoghi(comune_id)
+
+
+@app.post("/pacchetti/luoghi")
+def endpoint_crea_altro_luogo(payload: dict):
+    return crea_altro_luogo(payload)

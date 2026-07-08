@@ -24,7 +24,7 @@ def crea_pacchetto(payload):
     try:
         comune_id_str = payload.get("comune_id")
         sito_id = payload.get("sito_id")
-        luogo_manuale = payload.get("luogo_manuale")
+        altro_luogo_id = payload.get("altro_luogo_id")
         titolo = payload.get("titolo")
         descrizione = payload.get("descrizione")
         esperienza_ids = payload.get("esperienza_ids") or []
@@ -76,11 +76,18 @@ def crea_pacchetto(payload):
 
         piano = ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id_str)
 
+        nome_altro_luogo = None
+        if altro_luogo_id:
+            luogo_resp = supabase.table("altri_luoghi_pacchetti").select("nome_luogo").eq("id", altro_luogo_id).single().execute()
+            if luogo_resp.data:
+                nome_altro_luogo = luogo_resp.data["nome_luogo"]
+
         record = {
             "piano_id": piano["id"],
             "comune_id": comune_id_str,
             "sito_id": sito_id,
-            "luogo_manuale": luogo_manuale.strip() if luogo_manuale else None,
+            "altro_luogo_id": altro_luogo_id,
+            "luogo_manuale": nome_altro_luogo,
             "titolo": titolo.strip(),
             "descrizione": descrizione,
             "esperienze_incluse": esperienze_incluse,
@@ -116,62 +123,52 @@ def get_pacchetti(comune_id, stato=None):
         return {"errore": str(e)}
 
 
-def approva_pacchetto(pacchetto_id):
+def cambia_stato_pacchetto(pacchetto_id, nuovo_stato):
     try:
+        if nuovo_stato not in STATI_VALIDI:
+            return {"errore": "Stato non valido"}
+
         pacchetto_resp = supabase.table("pacchetti_esperienziali").select("stato").eq("id", pacchetto_id).single().execute()
         pacchetto = pacchetto_resp.data
         if not pacchetto:
             return {"errore": "Pacchetto non trovato"}
-        if pacchetto["stato"] != "proposto":
-            return {"errore": f"Il pacchetto è già in stato \"{pacchetto['stato']}\""}
 
-        supabase.table("pacchetti_esperienziali").update({
-            "stato": "approvato",
-            "data_approvazione": datetime.now().isoformat(),
-        }).eq("id", pacchetto_id).execute()
+        aggiornamento = {"stato": nuovo_stato}
+        if nuovo_stato == "approvato":
+            aggiornamento["data_approvazione"] = datetime.now().isoformat()
+        if nuovo_stato == "completato":
+            aggiornamento["data_completamento"] = datetime.now().isoformat()
 
-        return {"status": "approvato"}
+        supabase.table("pacchetti_esperienziali").update(aggiornamento).eq("id", pacchetto_id).execute()
+        return {"status": nuovo_stato}
     except Exception as e:
-        print(f"Errore approvazione pacchetto {pacchetto_id}: {e}")
+        print(f"Errore cambio stato pacchetto {pacchetto_id}: {e}")
         return {"errore": str(e)}
 
 
-def completa_pacchetto(pacchetto_id, margine_netto_reale=None, n_partecipanti=None):
+def salva_consuntivo_pacchetto(pacchetto_id, margine_netto_reale=None, n_partecipanti=None):
     try:
         pacchetto_resp = supabase.table("pacchetti_esperienziali").select("stato").eq("id", pacchetto_id).single().execute()
         pacchetto = pacchetto_resp.data
         if not pacchetto:
             return {"errore": "Pacchetto non trovato"}
-        if pacchetto["stato"] != "approvato":
-            return {"errore": "Solo un pacchetto approvato può essere segnato come completato"}
+        if pacchetto["stato"] != "completato":
+            return {"errore": "Il consuntivo può essere inserito solo su un pacchetto completato"}
 
-        aggiornamento = {"stato": "completato", "data_completamento": datetime.now().isoformat()}
+        aggiornamento = {}
         if margine_netto_reale is not None:
             aggiornamento["margine_netto_reale"] = margine_netto_reale
             aggiornamento["consuntivo_inserito"] = True
         if n_partecipanti is not None:
             aggiornamento["n_partecipanti"] = n_partecipanti
 
+        if not aggiornamento:
+            return {"errore": "Nessun valore da salvare"}
+
         supabase.table("pacchetti_esperienziali").update(aggiornamento).eq("id", pacchetto_id).execute()
-        return {"status": "completato"}
+        return {"status": "salvato"}
     except Exception as e:
-        print(f"Errore completamento pacchetto {pacchetto_id}: {e}")
-        return {"errore": str(e)}
-
-
-def elimina_pacchetto(pacchetto_id):
-    try:
-        pacchetto_resp = supabase.table("pacchetti_esperienziali").select("stato").eq("id", pacchetto_id).single().execute()
-        pacchetto = pacchetto_resp.data
-        if not pacchetto:
-            return {"errore": "Pacchetto non trovato"}
-        if pacchetto["stato"] not in ("proposto",):
-            return {"errore": "Solo un pacchetto ancora proposto può essere scartato"}
-
-        supabase.table("pacchetti_esperienziali").update({"stato": "scartato"}).eq("id", pacchetto_id).execute()
-        return {"status": "scartato"}
-    except Exception as e:
-        print(f"Errore eliminazione pacchetto {pacchetto_id}: {e}")
+        print(f"Errore salvataggio consuntivo pacchetto {pacchetto_id}: {e}")
         return {"errore": str(e)}
 
 
@@ -254,4 +251,40 @@ def get_storico_pacchetti(comune_id):
         return {"comune_id": comune_id, "pacchetti": pacchetti}
     except Exception as e:
         print(f"Errore storico pacchetti comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+def get_altri_luoghi(comune_id):
+    try:
+        piano = ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id)
+        luoghi_resp = supabase.table("altri_luoghi_pacchetti").select("*") \
+            .eq("piano_id", piano["id"]).eq("attivo", True).order("nome_luogo").execute()
+        return {"piano_id": piano["id"], "comune_id": comune_id, "luoghi": luoghi_resp.data or []}
+    except Exception as e:
+        print(f"Errore get altri luoghi comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+def crea_altro_luogo(payload):
+    try:
+        comune_id_str = payload.get("comune_id")
+        nome_luogo = payload.get("nome_luogo")
+
+        if not comune_id_str or not nome_luogo or not nome_luogo.strip():
+            return {"errore": "comune_id e nome_luogo sono obbligatori"}
+
+        nome_pulito = nome_luogo.strip()
+        piano = ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id_str)
+
+        esistenti_resp = supabase.table("altri_luoghi_pacchetti").select("nome_luogo") \
+            .eq("piano_id", piano["id"]).eq("attivo", True).execute()
+        if any(l["nome_luogo"].strip().lower() == nome_pulito.lower() for l in (esistenti_resp.data or [])):
+            return {"errore": "Questo luogo è già presente in elenco"}
+
+        record = {"piano_id": piano["id"], "comune_id": comune_id_str, "nome_luogo": nome_pulito}
+        creato_resp = supabase.table("altri_luoghi_pacchetti").insert(record).execute()
+
+        return {"status": "salvato", "luogo": creato_resp.data[0] if creato_resp.data else None}
+    except Exception as e:
+        print(f"Errore creazione altro luogo: {e}")
         return {"errore": str(e)}
