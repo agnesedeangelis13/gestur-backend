@@ -27,9 +27,11 @@ def crea_pacchetto(payload):
         altro_luogo_id = payload.get("altro_luogo_id")
         titolo = payload.get("titolo")
         descrizione = payload.get("descrizione")
+        tipo_pacchetto = payload.get("tipo_pacchetto")
         esperienza_ids = payload.get("esperienza_ids") or []
         prezzo_ingresso_sito = payload.get("prezzo_ingresso_sito", 0)
         sconto_pct = payload.get("sconto_pct", 0)
+        persone_attese = payload.get("persone_attese")
         data_proposta = payload.get("data_proposta")
         generato_da_bassa_affluenza = payload.get("generato_da_bassa_affluenza", False)
 
@@ -38,6 +40,9 @@ def crea_pacchetto(payload):
 
         if sconto_pct < 0 or sconto_pct > 100:
             return {"errore": "sconto_pct deve essere tra 0 e 100"}
+
+        if persone_attese is not None and persone_attese < 0:
+            return {"errore": "persone_attese non può essere negativo"}
 
         commissione_risultato = get_commissione(comune_id_str)
         if "errore" in commissione_risultato:
@@ -70,9 +75,11 @@ def crea_pacchetto(payload):
             totale_esperienze += prezzo_esp
             margine_da_esperienze += prezzo_esp * commissione_applicata / 100
 
+        moltiplicatore_persone = persone_attese if persone_attese else 1
         prezzo_pieno = (prezzo_ingresso_sito or 0) + totale_esperienze
         prezzo_totale_suggerito = round(prezzo_pieno * (1 - sconto_pct / 100), 2)
-        margine_netto_stimato = round((prezzo_ingresso_sito or 0) + margine_da_esperienze, 2)
+        margine_unitario_stimato = round((prezzo_ingresso_sito or 0) + margine_da_esperienze, 2)
+        margine_netto_stimato = round(margine_unitario_stimato * moltiplicatore_persone, 2)
 
         piano = ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id_str)
 
@@ -90,11 +97,14 @@ def crea_pacchetto(payload):
             "luogo_manuale": nome_altro_luogo,
             "titolo": titolo.strip(),
             "descrizione": descrizione,
+            "tipo_pacchetto": tipo_pacchetto,
             "esperienze_incluse": esperienze_incluse,
             "prezzo_ingresso_sito": prezzo_ingresso_sito,
             "prezzo_pieno": round(prezzo_pieno, 2),
             "sconto_pct": sconto_pct,
             "prezzo_totale_suggerito": prezzo_totale_suggerito,
+            "persone_attese": persone_attese,
+            "margine_unitario_stimato": margine_unitario_stimato,
             "margine_netto_stimato": margine_netto_stimato,
             "data_proposta": data_proposta,
             "generato_da_bassa_affluenza": bool(generato_da_bassa_affluenza),
@@ -198,6 +208,21 @@ def get_statistiche_pacchetti(comune_id):
                 cat = e.get("categoria_fornitore") or "N/D"
                 breakdown_categoria[cat] = breakdown_categoria.get(cat, 0) + 1
 
+        conteggio_tipo_pacchetto = {}
+        for p in pacchetti:
+            if p["stato"] == "scartato":
+                continue
+            tipo = p.get("tipo_pacchetto") or "Non specificato"
+            conteggio_tipo_pacchetto[tipo] = conteggio_tipo_pacchetto.get(tipo, 0) + 1
+
+        tipologie_piu_scelte = [
+            {"tipo": tipo, "conteggio": conteggio}
+            for tipo, conteggio in sorted(conteggio_tipo_pacchetto.items(), key=lambda x: x[1], reverse=True)
+        ]
+
+        presenze_attese_totali = sum(p.get("persone_attese") or 0 for p in pacchetti if p["stato"] != "scartato")
+        presenze_reali_totali = sum(p.get("n_partecipanti") or 0 for p in completati)
+
         andamento_raw = defaultdict(lambda: {"margine": 0.0, "presenze": 0})
         for p in completati:
             riferimento = p.get("data_completamento") or p.get("data_proposta")
@@ -223,6 +248,9 @@ def get_statistiche_pacchetti(comune_id):
             "n_generati_da_bassa_affluenza": len(generati_da_bassa_affluenza),
             "valore_generati_da_bassa_affluenza": valore_generati_bassa_affluenza,
             "breakdown_categoria_fornitori": breakdown_categoria,
+            "tipologie_piu_scelte": tipologie_piu_scelte,
+            "presenze_attese_totali": presenze_attese_totali,
+            "presenze_reali_totali": presenze_reali_totali,
             "andamento_mensile": andamento_mensile,
             "nota_metodologica": (
                 "Il margine per il comune è l'ingresso al sito (intero) più la commissione di gestione applicata "
