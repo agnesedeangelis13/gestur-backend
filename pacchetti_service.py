@@ -1,3 +1,4 @@
+from collections import defaultdict
 from datetime import datetime
 from supabase import create_client
 import os
@@ -23,6 +24,7 @@ def crea_pacchetto(payload):
     try:
         comune_id_str = payload.get("comune_id")
         sito_id = payload.get("sito_id")
+        luogo_manuale = payload.get("luogo_manuale")
         titolo = payload.get("titolo")
         descrizione = payload.get("descrizione")
         esperienza_ids = payload.get("esperienza_ids") or []
@@ -78,6 +80,7 @@ def crea_pacchetto(payload):
             "piano_id": piano["id"],
             "comune_id": comune_id_str,
             "sito_id": sito_id,
+            "luogo_manuale": luogo_manuale.strip() if luogo_manuale else None,
             "titolo": titolo.strip(),
             "descrizione": descrizione,
             "esperienze_incluse": esperienze_incluse,
@@ -133,7 +136,7 @@ def approva_pacchetto(pacchetto_id):
         return {"errore": str(e)}
 
 
-def completa_pacchetto(pacchetto_id, margine_netto_reale=None):
+def completa_pacchetto(pacchetto_id, margine_netto_reale=None, n_partecipanti=None):
     try:
         pacchetto_resp = supabase.table("pacchetti_esperienziali").select("stato").eq("id", pacchetto_id).single().execute()
         pacchetto = pacchetto_resp.data
@@ -142,10 +145,12 @@ def completa_pacchetto(pacchetto_id, margine_netto_reale=None):
         if pacchetto["stato"] != "approvato":
             return {"errore": "Solo un pacchetto approvato può essere segnato come completato"}
 
-        aggiornamento = {"stato": "completato"}
+        aggiornamento = {"stato": "completato", "data_completamento": datetime.now().isoformat()}
         if margine_netto_reale is not None:
             aggiornamento["margine_netto_reale"] = margine_netto_reale
             aggiornamento["consuntivo_inserito"] = True
+        if n_partecipanti is not None:
+            aggiornamento["n_partecipanti"] = n_partecipanti
 
         supabase.table("pacchetti_esperienziali").update(aggiornamento).eq("id", pacchetto_id).execute()
         return {"status": "completato"}
@@ -196,6 +201,20 @@ def get_statistiche_pacchetti(comune_id):
                 cat = e.get("categoria_fornitore") or "N/D"
                 breakdown_categoria[cat] = breakdown_categoria.get(cat, 0) + 1
 
+        andamento_raw = defaultdict(lambda: {"margine": 0.0, "presenze": 0})
+        for p in completati:
+            riferimento = p.get("data_completamento") or p.get("data_proposta")
+            if not riferimento:
+                continue
+            mese = str(riferimento)[:7]
+            andamento_raw[mese]["margine"] += margine_effettivo(p)
+            andamento_raw[mese]["presenze"] += p.get("n_partecipanti") or 0
+
+        andamento_mensile = [
+            {"mese": mese, "margine": round(dati["margine"], 2), "presenze": dati["presenze"]}
+            for mese, dati in sorted(andamento_raw.items())
+        ]
+
         return {
             "comune_id": comune_id,
             "n_totale": len(pacchetti),
@@ -207,6 +226,7 @@ def get_statistiche_pacchetti(comune_id):
             "n_generati_da_bassa_affluenza": len(generati_da_bassa_affluenza),
             "valore_generati_da_bassa_affluenza": valore_generati_bassa_affluenza,
             "breakdown_categoria_fornitori": breakdown_categoria,
+            "andamento_mensile": andamento_mensile,
             "nota_metodologica": (
                 "Il margine per il comune è l'ingresso al sito (intero) più la commissione di gestione applicata "
                 "su ciascuna esperienza inclusa (ridotta per i fornitori che partecipano al welfare locale). Il "
@@ -216,4 +236,22 @@ def get_statistiche_pacchetti(comune_id):
         }
     except Exception as e:
         print(f"Errore statistiche pacchetti comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+def get_storico_pacchetti(comune_id):
+    try:
+        piano = ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id)
+        pacchetti_resp = supabase.table("pacchetti_esperienziali").select("*") \
+            .eq("piano_id", piano["id"]).in_("stato", ["completato", "scartato"]).execute()
+        pacchetti = pacchetti_resp.data or []
+
+        def data_ordinamento(p):
+            return p.get("data_completamento") or p.get("data_approvazione") or p.get("creato_il") or ""
+
+        pacchetti.sort(key=data_ordinamento, reverse=True)
+
+        return {"comune_id": comune_id, "pacchetti": pacchetti}
+    except Exception as e:
+        print(f"Errore storico pacchetti comune {comune_id}: {e}")
         return {"errore": str(e)}

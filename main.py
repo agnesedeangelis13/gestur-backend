@@ -125,6 +125,7 @@ from pacchetti_service import (
     completa_pacchetto,
     elimina_pacchetto,
     get_statistiche_pacchetti,
+    get_storico_pacchetti,
 )
 load_dotenv()
 
@@ -5439,7 +5440,8 @@ def endpoint_approva_pacchetto(pacchetto_id: int):
 @app.put("/pacchetti/{pacchetto_id}/completa")
 def endpoint_completa_pacchetto(pacchetto_id: int, payload: dict = None):
     margine = payload.get("margine_netto_reale") if payload else None
-    return completa_pacchetto(pacchetto_id, margine)
+    partecipanti = payload.get("n_partecipanti") if payload else None
+    return completa_pacchetto(pacchetto_id, margine, partecipanti)
 
 
 @app.delete("/pacchetti/{pacchetto_id}")
@@ -5450,3 +5452,8 @@ def endpoint_elimina_pacchetto(pacchetto_id: int):
 @app.get("/pacchetti-statistiche/{comune_id}")
 def endpoint_get_statistiche_pacchetti(comune_id: str):
     return get_statistiche_pacchetti(comune_id)
+
+
+@app.get("/pacchetti-storico/{comune_id}")
+def endpoint_get_storico_pacchetti(comune_id: str):
+    return get_storico_pacchetti(comune_id)
