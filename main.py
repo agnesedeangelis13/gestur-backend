@@ -105,6 +105,27 @@ from categorie_biglietto_service import (
     crea_categoria_biglietto,
     elimina_categoria_biglietto,
 )
+from marketplace_service import (
+    get_categorie_fornitori,
+    crea_categoria_fornitore,
+    get_commissione,
+    aggiorna_commissione,
+    get_fornitori,
+    crea_fornitore,
+    aggiorna_fornitore,
+    elimina_fornitore,
+    crea_esperienza,
+    elimina_esperienza,
+)
+from pacchetti_service import (
+    suggerisci_giorni_pacchetto,
+    crea_pacchetto,
+    get_pacchetti,
+    approva_pacchetto,
+    completa_pacchetto,
+    elimina_pacchetto,
+    get_statistiche_pacchetti,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -5343,3 +5364,89 @@ def endpoint_crea_categoria_biglietto(payload: dict):
 @app.delete("/categorie-biglietto/{categoria_id}")
 def endpoint_elimina_categoria_biglietto(categoria_id: int):
     return elimina_categoria_biglietto(categoria_id)
+
+
+@app.get("/marketplace/categorie/{comune_id}")
+def endpoint_get_categorie_fornitori(comune_id: str):
+    return get_categorie_fornitori(comune_id)
+
+
+@app.post("/marketplace/categorie")
+def endpoint_crea_categoria_fornitore(payload: dict):
+    return crea_categoria_fornitore(payload)
+
+
+@app.get("/marketplace/commissione/{comune_id}")
+def endpoint_get_commissione(comune_id: str):
+    return get_commissione(comune_id)
+
+
+@app.put("/marketplace/commissione")
+def endpoint_aggiorna_commissione(payload: dict):
+    return aggiorna_commissione(payload)
+
+
+@app.get("/marketplace/fornitori/{comune_id}")
+def endpoint_get_fornitori(comune_id: str, categoria: str = None):
+    return get_fornitori(comune_id, categoria)
+
+
+@app.post("/marketplace/fornitori")
+def endpoint_crea_fornitore(payload: dict):
+    return crea_fornitore(payload)
+
+
+@app.put("/marketplace/fornitori/{fornitore_id}")
+def endpoint_aggiorna_fornitore(fornitore_id: int, payload: dict):
+    return aggiorna_fornitore(fornitore_id, payload)
+
+
+@app.delete("/marketplace/fornitori/{fornitore_id}")
+def endpoint_elimina_fornitore(fornitore_id: int):
+    return elimina_fornitore(fornitore_id)
+
+
+@app.post("/marketplace/esperienze")
+def endpoint_crea_esperienza(payload: dict):
+    return crea_esperienza(payload)
+
+
+@app.delete("/marketplace/esperienze/{esperienza_id}")
+def endpoint_elimina_esperienza(esperienza_id: int):
+    return elimina_esperienza(esperienza_id)
+
+
+@app.get("/pacchetti/giorni-bassa-affluenza/{sito_id}")
+def endpoint_suggerisci_giorni_pacchetto(sito_id: int):
+    return suggerisci_giorni_pacchetto(sito_id)
+
+
+@app.post("/pacchetti")
+def endpoint_crea_pacchetto(payload: dict):
+    return crea_pacchetto(payload)
+
+
+@app.get("/pacchetti/{comune_id}")
+def endpoint_get_pacchetti(comune_id: str, stato: str = None):
+    return get_pacchetti(comune_id, stato)
+
+
+@app.put("/pacchetti/{pacchetto_id}/approva")
+def endpoint_approva_pacchetto(pacchetto_id: int):
+    return approva_pacchetto(pacchetto_id)
+
+
+@app.put("/pacchetti/{pacchetto_id}/completa")
+def endpoint_completa_pacchetto(pacchetto_id: int, payload: dict = None):
+    margine = payload.get("margine_netto_reale") if payload else None
+    return completa_pacchetto(pacchetto_id, margine)
+
+
+@app.delete("/pacchetti/{pacchetto_id}")
+def endpoint_elimina_pacchetto(pacchetto_id: int):
+    return elimina_pacchetto(pacchetto_id)
+
+
+@app.get("/pacchetti-statistiche/{comune_id}")
+def endpoint_get_statistiche_pacchetti(comune_id: str):
+    return get_statistiche_pacchetti(comune_id)
