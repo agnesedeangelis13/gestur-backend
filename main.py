@@ -100,6 +100,11 @@ from maslow_service import (
     aggiorna_mappatura_capitolo,
     get_piramide_maslow,
 )
+from categorie_biglietto_service import (
+    get_categorie_biglietto,
+    crea_categoria_biglietto,
+    elimina_categoria_biglietto,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -5236,3 +5241,18 @@ def endpoint_aggiorna_mappatura_capitolo(payload: dict):
 @app.get("/maslow/piramide/{comune_id}")
 def endpoint_get_piramide_maslow(comune_id: str):
     return get_piramide_maslow(comune_id)
+
+
+@app.get("/categorie-biglietto/{sito_id}")
+def endpoint_get_categorie_biglietto(sito_id: int):
+    return get_categorie_biglietto(sito_id)
+
+
+@app.post("/categorie-biglietto")
+def endpoint_crea_categoria_biglietto(payload: dict):
+    return crea_categoria_biglietto(payload)
+
+
+@app.delete("/categorie-biglietto/{categoria_id}")
+def endpoint_elimina_categoria_biglietto(categoria_id: int):
+    return elimina_categoria_biglietto(categoria_id)
