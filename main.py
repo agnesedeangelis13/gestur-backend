@@ -128,6 +128,14 @@ from pacchetti_service import (
     get_altri_luoghi,
     crea_altro_luogo,
 )
+from pacchetti_solidali_service import (
+    crea_donazione,
+    get_donazioni,
+    get_pass,
+    utilizza_pass,
+    annulla_pass,
+    get_impatto_sociale,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -5461,3 +5469,35 @@ def endpoint_get_altri_luoghi(comune_id: str):
 @app.post("/pacchetti/luoghi")
 def endpoint_crea_altro_luogo(payload: dict):
     return crea_altro_luogo(payload)
+
+
+@app.post("/pacchetti-solidali/donazioni")
+def endpoint_crea_donazione(payload: dict):
+    return crea_donazione(payload)
+
+
+@app.get("/pacchetti-solidali/donazioni/{comune_id}")
+def endpoint_get_donazioni(comune_id: str):
+    return get_donazioni(comune_id)
+
+
+@app.get("/pacchetti-solidali/pass/{comune_id}")
+def endpoint_get_pass(comune_id: str):
+    return get_pass(comune_id)
+
+
+@app.put("/pacchetti-solidali/pass/{pass_id}/utilizza")
+def endpoint_utilizza_pass(pass_id: int, payload: dict = None):
+    nome_beneficiario = payload.get("nome_beneficiario") if payload else None
+    note = payload.get("note") if payload else None
+    return utilizza_pass(pass_id, nome_beneficiario, note)
+
+
+@app.put("/pacchetti-solidali/pass/{pass_id}/annulla")
+def endpoint_annulla_pass(pass_id: int):
+    return annulla_pass(pass_id)
+
+
+@app.get("/pacchetti-solidali/impatto/{comune_id}")
+def endpoint_get_impatto_sociale(comune_id: str):
+    return get_impatto_sociale(comune_id)
