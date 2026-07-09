@@ -144,6 +144,22 @@ from mercati_richiesti_service import (
     get_storico_mercati,
     get_statistiche_mercati,
 )
+from appalti_logistica_service import (
+    crea_fornitore as crea_fornitore_logistica,
+    get_fornitori as get_fornitori_logistica,
+    aggiorna_fornitore as aggiorna_fornitore_logistica,
+    disattiva_fornitore,
+    crea_scheda_tecnica,
+    get_schede_tecniche,
+    get_scheda_tecnica_dettaglio,
+    aggiungi_fabbisogno,
+    elimina_fabbisogno,
+    aggiungi_preventivo,
+    segna_preventivo_vincitore,
+    elimina_preventivo,
+    conferma_scheda_tecnica,
+    get_statistiche_appalti,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -5545,3 +5561,73 @@ def endpoint_get_storico_mercati(comune_id: str):
 @app.get("/mercati-statistiche/{comune_id}")
 def endpoint_get_statistiche_mercati(comune_id: str):
     return get_statistiche_mercati(comune_id)
+
+
+@app.post("/appalti/fornitori")
+def endpoint_crea_fornitore_logistica(payload: dict):
+    return crea_fornitore_logistica(payload)
+
+
+@app.get("/appalti/fornitori/{comune_id}")
+def endpoint_get_fornitori_logistica(comune_id: str):
+    return get_fornitori_logistica(comune_id)
+
+
+@app.put("/appalti/fornitori/{fornitore_id}")
+def endpoint_aggiorna_fornitore_logistica(fornitore_id: int, payload: dict):
+    return aggiorna_fornitore_logistica(fornitore_id, payload)
+
+
+@app.delete("/appalti/fornitori/{fornitore_id}")
+def endpoint_disattiva_fornitore_logistica(fornitore_id: int):
+    return disattiva_fornitore(fornitore_id)
+
+
+@app.post("/appalti/schede")
+def endpoint_crea_scheda_tecnica(payload: dict):
+    return crea_scheda_tecnica(payload)
+
+
+@app.get("/appalti/schede/{comune_id}")
+def endpoint_get_schede_tecniche(comune_id: str):
+    return get_schede_tecniche(comune_id)
+
+
+@app.get("/appalti/schede-dettaglio/{scheda_id}")
+def endpoint_get_scheda_tecnica_dettaglio(scheda_id: int):
+    return get_scheda_tecnica_dettaglio(scheda_id)
+
+
+@app.post("/appalti/schede/{scheda_id}/fabbisogni")
+def endpoint_aggiungi_fabbisogno(scheda_id: int, payload: dict):
+    return aggiungi_fabbisogno(scheda_id, payload)
+
+
+@app.delete("/appalti/fabbisogni/{fabbisogno_id}")
+def endpoint_elimina_fabbisogno(fabbisogno_id: int):
+    return elimina_fabbisogno(fabbisogno_id)
+
+
+@app.post("/appalti/fabbisogni/{fabbisogno_id}/preventivi")
+def endpoint_aggiungi_preventivo(fabbisogno_id: int, payload: dict):
+    return aggiungi_preventivo(fabbisogno_id, payload)
+
+
+@app.put("/appalti/preventivi/{preventivo_id}/vincitore")
+def endpoint_segna_preventivo_vincitore(preventivo_id: int):
+    return segna_preventivo_vincitore(preventivo_id)
+
+
+@app.delete("/appalti/preventivi/{preventivo_id}")
+def endpoint_elimina_preventivo(preventivo_id: int):
+    return elimina_preventivo(preventivo_id)
+
+
+@app.put("/appalti/schede/{scheda_id}/conferma")
+def endpoint_conferma_scheda_tecnica(scheda_id: int):
+    return conferma_scheda_tecnica(scheda_id)
+
+
+@app.get("/appalti-statistiche/{comune_id}")
+def endpoint_get_statistiche_appalti(comune_id: str):
+    return get_statistiche_appalti(comune_id)
