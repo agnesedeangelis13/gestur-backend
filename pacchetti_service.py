@@ -26,7 +26,7 @@ def crea_pacchetto(payload):
         luoghi_inclusi_input = payload.get("luoghi_inclusi") or []
         titolo = payload.get("titolo")
         descrizione = payload.get("descrizione")
-        tipo_pacchetto = payload.get("tipo_pacchetto")
+        tipi_pacchetto = payload.get("tipi_pacchetto") or []
         esperienza_ids = payload.get("esperienza_ids") or []
         prezzo_ingresso_sito = payload.get("prezzo_ingresso_sito", 0)
         sconto_pct = payload.get("sconto_pct", 0)
@@ -103,7 +103,7 @@ def crea_pacchetto(payload):
             "luoghi_inclusi": luoghi_inclusi,
             "titolo": titolo.strip(),
             "descrizione": descrizione,
-            "tipo_pacchetto": tipo_pacchetto,
+            "tipi_pacchetto": tipi_pacchetto,
             "esperienze_incluse": esperienze_incluse,
             "prezzo_ingresso_sito": prezzo_ingresso_sito,
             "prezzo_pieno": round(prezzo_pieno, 2),
@@ -218,8 +218,9 @@ def get_statistiche_pacchetti(comune_id):
         for p in pacchetti:
             if p["stato"] == "scartato":
                 continue
-            tipo = p.get("tipo_pacchetto") or "Non specificato"
-            conteggio_tipo_pacchetto[tipo] = conteggio_tipo_pacchetto.get(tipo, 0) + 1
+            tipi = p.get("tipi_pacchetto") or ["Non specificato"]
+            for tipo in tipi:
+                conteggio_tipo_pacchetto[tipo] = conteggio_tipo_pacchetto.get(tipo, 0) + 1
 
         tipologie_piu_scelte = [
             {"tipo": tipo, "conteggio": conteggio}
@@ -229,9 +230,10 @@ def get_statistiche_pacchetti(comune_id):
         margine_per_tipo_raw = defaultdict(float)
         presenze_per_tipo_raw = defaultdict(int)
         for p in completati:
-            tipo = p.get("tipo_pacchetto") or "Non specificato"
-            margine_per_tipo_raw[tipo] += margine_effettivo(p)
-            presenze_per_tipo_raw[tipo] += p.get("n_partecipanti") or 0
+            tipi = p.get("tipi_pacchetto") or ["Non specificato"]
+            for tipo in tipi:
+                margine_per_tipo_raw[tipo] += margine_effettivo(p)
+                presenze_per_tipo_raw[tipo] += p.get("n_partecipanti") or 0
 
         margine_per_tipo = [
             {"tipo": tipo, "valore": round(valore, 2)}
