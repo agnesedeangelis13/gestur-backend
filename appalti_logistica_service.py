@@ -78,6 +78,7 @@ def crea_scheda_tecnica(payload):
         titolo = payload.get("titolo")
         tipo_origine = payload.get("tipo_origine")
         mercato_id = payload.get("mercato_id")
+        evento_id = payload.get("evento_id")
         riferimento_libero = payload.get("riferimento_libero")
         ricavi_previsti = payload.get("ricavi_previsti")
         fabbisogni_input = payload.get("fabbisogni") or []
@@ -90,6 +91,7 @@ def crea_scheda_tecnica(payload):
             "titolo": titolo.strip(),
             "tipo_origine": tipo_origine,
             "mercato_id": mercato_id,
+            "evento_id": evento_id,
             "riferimento_libero": riferimento_libero,
             "ricavi_previsti": ricavi_previsti,
             "stato": "bozza",
