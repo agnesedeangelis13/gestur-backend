@@ -23,8 +23,7 @@ def suggerisci_giorni_pacchetto(sito_id):
 def crea_pacchetto(payload):
     try:
         comune_id_str = payload.get("comune_id")
-        sito_id = payload.get("sito_id")
-        altro_luogo_id = payload.get("altro_luogo_id")
+        luoghi_inclusi_input = payload.get("luoghi_inclusi") or []
         titolo = payload.get("titolo")
         descrizione = payload.get("descrizione")
         tipo_pacchetto = payload.get("tipo_pacchetto")
@@ -83,18 +82,25 @@ def crea_pacchetto(payload):
 
         piano = ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id_str)
 
-        nome_altro_luogo = None
-        if altro_luogo_id:
-            luogo_resp = supabase.table("altri_luoghi_pacchetti").select("nome_luogo").eq("id", altro_luogo_id).single().execute()
-            if luogo_resp.data:
-                nome_altro_luogo = luogo_resp.data["nome_luogo"]
+        luoghi_inclusi = []
+        for luogo_rif in luoghi_inclusi_input:
+            tipo_luogo = luogo_rif.get("tipo")
+            luogo_id = luogo_rif.get("id")
+            if not tipo_luogo or not luogo_id:
+                continue
+            if tipo_luogo == "sito":
+                sito_resp = supabase.table("siti_culturali").select("nome_sito").eq("id", luogo_id).single().execute()
+                if sito_resp.data:
+                    luoghi_inclusi.append({"tipo": "sito", "id": luogo_id, "nome": sito_resp.data["nome_sito"]})
+            elif tipo_luogo == "altro":
+                luogo_resp = supabase.table("altri_luoghi_pacchetti").select("nome_luogo").eq("id", luogo_id).single().execute()
+                if luogo_resp.data:
+                    luoghi_inclusi.append({"tipo": "altro", "id": luogo_id, "nome": luogo_resp.data["nome_luogo"]})
 
         record = {
             "piano_id": piano["id"],
             "comune_id": comune_id_str,
-            "sito_id": sito_id,
-            "altro_luogo_id": altro_luogo_id,
-            "luogo_manuale": nome_altro_luogo,
+            "luoghi_inclusi": luoghi_inclusi,
             "titolo": titolo.strip(),
             "descrizione": descrizione,
             "tipo_pacchetto": tipo_pacchetto,
@@ -220,6 +226,22 @@ def get_statistiche_pacchetti(comune_id):
             for tipo, conteggio in sorted(conteggio_tipo_pacchetto.items(), key=lambda x: x[1], reverse=True)
         ]
 
+        margine_per_tipo_raw = defaultdict(float)
+        presenze_per_tipo_raw = defaultdict(int)
+        for p in completati:
+            tipo = p.get("tipo_pacchetto") or "Non specificato"
+            margine_per_tipo_raw[tipo] += margine_effettivo(p)
+            presenze_per_tipo_raw[tipo] += p.get("n_partecipanti") or 0
+
+        margine_per_tipo = [
+            {"tipo": tipo, "valore": round(valore, 2)}
+            for tipo, valore in sorted(margine_per_tipo_raw.items(), key=lambda x: x[1], reverse=True)
+        ]
+        presenze_per_tipo = [
+            {"tipo": tipo, "valore": valore}
+            for tipo, valore in sorted(presenze_per_tipo_raw.items(), key=lambda x: x[1], reverse=True)
+        ]
+
         presenze_attese_totali = sum(p.get("persone_attese") or 0 for p in pacchetti if p["stato"] != "scartato")
         presenze_reali_totali = sum(p.get("n_partecipanti") or 0 for p in completati)
 
@@ -249,6 +271,8 @@ def get_statistiche_pacchetti(comune_id):
             "valore_generati_da_bassa_affluenza": valore_generati_bassa_affluenza,
             "breakdown_categoria_fornitori": breakdown_categoria,
             "tipologie_piu_scelte": tipologie_piu_scelte,
+            "margine_per_tipo": margine_per_tipo,
+            "presenze_per_tipo": presenze_per_tipo,
             "presenze_attese_totali": presenze_attese_totali,
             "presenze_reali_totali": presenze_reali_totali,
             "andamento_mensile": andamento_mensile,
