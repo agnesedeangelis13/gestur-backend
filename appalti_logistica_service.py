@@ -293,6 +293,9 @@ def get_storico_schede(comune_id):
     except Exception as e:
         print(f"Errore storico schede comune {comune_id}: {e}")
         return {"errore": str(e)}
+
+
+def get_statistiche_appalti(comune_id):
     try:
         schede_resp = supabase.table("schede_tecniche").select("*").eq("comune_id", comune_id).execute()
         schede = schede_resp.data or []
