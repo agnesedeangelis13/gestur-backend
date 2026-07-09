@@ -136,6 +136,14 @@ from pacchetti_solidali_service import (
     annulla_pass,
     get_impatto_sociale,
 )
+from mercati_richiesti_service import (
+    crea_mercato,
+    get_mercati,
+    cambia_stato_mercato,
+    salva_consuntivo_mercato,
+    get_storico_mercati,
+    get_statistiche_mercati,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -5501,3 +5509,39 @@ def endpoint_annulla_pass(pass_id: int):
 @app.get("/pacchetti-solidali/impatto/{comune_id}")
 def endpoint_get_impatto_sociale(comune_id: str):
     return get_impatto_sociale(comune_id)
+
+
+@app.post("/mercati")
+def endpoint_crea_mercato(payload: dict):
+    return crea_mercato(payload)
+
+
+@app.get("/mercati/{comune_id}")
+def endpoint_get_mercati(comune_id: str):
+    return get_mercati(comune_id)
+
+
+@app.put("/mercati/{mercato_id}/stato")
+def endpoint_cambia_stato_mercato(mercato_id: int, payload: dict):
+    return cambia_stato_mercato(mercato_id, payload.get("stato"))
+
+
+@app.put("/mercati/{mercato_id}/consuntivo")
+def endpoint_salva_consuntivo_mercato(mercato_id: int, payload: dict):
+    return salva_consuntivo_mercato(
+        mercato_id,
+        payload.get("n_espositori_reali"),
+        payload.get("n_visitatori_reali"),
+        payload.get("incassi_reali"),
+        payload.get("n_stalli_occupati"),
+    )
+
+
+@app.get("/mercati-storico/{comune_id}")
+def endpoint_get_storico_mercati(comune_id: str):
+    return get_storico_mercati(comune_id)
+
+
+@app.get("/mercati-statistiche/{comune_id}")
+def endpoint_get_statistiche_mercati(comune_id: str):
+    return get_statistiche_mercati(comune_id)
