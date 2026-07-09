@@ -263,7 +263,36 @@ def conferma_scheda_tecnica(scheda_id):
         return {"errore": str(e)}
 
 
-def get_statistiche_appalti(comune_id):
+def get_storico_schede(comune_id):
+    try:
+        schede_resp = supabase.table("schede_tecniche").select("*").eq("comune_id", comune_id).eq("stato", "confermata").order("creato_il", desc=True).execute()
+        schede = schede_resp.data or []
+        if not schede:
+            return {"comune_id": comune_id, "schede": []}
+
+        scheda_ids = [s["id"] for s in schede]
+        fabbisogni_resp = supabase.table("fabbisogni_logistici").select("*").in_("scheda_tecnica_id", scheda_ids).execute()
+        fabbisogni = fabbisogni_resp.data or []
+
+        fabbisogno_ids = [f["id"] for f in fabbisogni]
+        preventivi_resp = supabase.table("preventivi_logistici").select("*").in_("fabbisogno_id", fabbisogno_ids).execute() if fabbisogno_ids else None
+        preventivi = preventivi_resp.data or []
+        vincitori = [p for p in preventivi if p["vincitore"]]
+
+        fabbisogni_per_scheda = defaultdict(list)
+        for f in fabbisogni:
+            fabbisogni_per_scheda[f["scheda_tecnica_id"]].append(f["id"])
+
+        for s in schede:
+            ids_fabbisogni = fabbisogni_per_scheda.get(s["id"], [])
+            s["n_fabbisogni"] = len(ids_fabbisogni)
+            s["costo_logistico"] = round(sum(p["importo"] for p in vincitori if p["fabbisogno_id"] in ids_fabbisogni), 2)
+            s["margine_netto"] = round((s.get("ricavi_previsti") or 0) - s["costo_logistico"], 2)
+
+        return {"comune_id": comune_id, "schede": schede}
+    except Exception as e:
+        print(f"Errore storico schede comune {comune_id}: {e}")
+        return {"errore": str(e)}
     try:
         schede_resp = supabase.table("schede_tecniche").select("*").eq("comune_id", comune_id).execute()
         schede = schede_resp.data or []

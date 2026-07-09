@@ -159,6 +159,7 @@ from appalti_logistica_service import (
     elimina_preventivo,
     conferma_scheda_tecnica,
     get_statistiche_appalti,
+    get_storico_schede,
 )
 load_dotenv()
 
@@ -5631,3 +5632,8 @@ def endpoint_conferma_scheda_tecnica(scheda_id: int):
 @app.get("/appalti-statistiche/{comune_id}")
 def endpoint_get_statistiche_appalti(comune_id: str):
     return get_statistiche_appalti(comune_id)
+
+
+@app.get("/appalti-storico/{comune_id}")
+def endpoint_get_storico_schede(comune_id: str):
+    return get_storico_schede(comune_id)
