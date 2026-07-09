@@ -29,6 +29,7 @@ def crea_donazione(payload):
         contatti_donatore = payload.get("contatti_donatore")
         pacchetto_id = payload.get("pacchetto_id")
         tipo_generico = payload.get("tipo_generico")
+        luoghi_inclusi_input = payload.get("luoghi_inclusi") or []
         categoria_beneficiario = payload.get("categoria_beneficiario")
         nome_beneficiario = payload.get("nome_beneficiario")
         valore_totale = payload.get("valore_totale")
@@ -49,6 +50,21 @@ def crea_donazione(payload):
 
         piano = ottieni_o_crea_piano_sviluppo_locale_attivo(comune_id_str)
 
+        luoghi_inclusi = []
+        for luogo_rif in luoghi_inclusi_input:
+            tipo_luogo = luogo_rif.get("tipo")
+            luogo_id = luogo_rif.get("id")
+            if not tipo_luogo or not luogo_id:
+                continue
+            if tipo_luogo == "sito":
+                sito_resp = supabase.table("siti_culturali").select("nome_sito").eq("id", luogo_id).single().execute()
+                if sito_resp.data:
+                    luoghi_inclusi.append({"tipo": "sito", "id": luogo_id, "nome": sito_resp.data["nome_sito"]})
+            elif tipo_luogo == "altro":
+                luogo_resp = supabase.table("altri_luoghi_pacchetti").select("nome_luogo").eq("id", luogo_id).single().execute()
+                if luogo_resp.data:
+                    luoghi_inclusi.append({"tipo": "altro", "id": luogo_id, "nome": luogo_resp.data["nome_luogo"]})
+
         record = {
             "piano_id": piano["id"],
             "comune_id": comune_id_str,
@@ -56,6 +72,7 @@ def crea_donazione(payload):
             "contatti_donatore": contatti_donatore,
             "pacchetto_id": pacchetto_id,
             "tipo_generico": tipo_generico,
+            "luoghi_inclusi": luoghi_inclusi,
             "categoria_beneficiario": categoria_beneficiario,
             "nome_beneficiario": nome_beneficiario,
             "valore_totale": valore_totale,
