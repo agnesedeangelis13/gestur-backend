@@ -2981,8 +2981,10 @@ def get_statistiche_questionari_accoglienza(comune_id: str):
 
         conteggio_motivo = {}
         for q in questionari:
-            motivo = q.get("motivo_visita")
-            if motivo:
+            motivo_grezzo = q.get("motivo_visita")
+            if not motivo_grezzo:
+                continue
+            for motivo in [m.strip() for m in motivo_grezzo.split(",") if m.strip()]:
                 conteggio_motivo[motivo] = conteggio_motivo.get(motivo, 0) + 1
         per_motivo_visita = [
             {"motivo": m, "conteggio": c}
