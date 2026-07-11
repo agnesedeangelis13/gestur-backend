@@ -161,6 +161,17 @@ from appalti_logistica_service import (
     get_statistiche_appalti,
     get_storico_schede,
 )
+from adempimenti_service import (
+    crea_adempimento,
+    get_checklist,
+    aggiorna_stato_adempimento,
+    salva_documento_adempimento,
+    elimina_documento_adempimento,
+    elimina_adempimento,
+    verifica_checklist_completa,
+    get_scadenziario,
+    get_statistiche_adempimenti,
+)
 load_dotenv()
 
 app = FastAPI()
@@ -1326,6 +1337,12 @@ def approva_richiesta_evento(richiesta_id: int):
         richiesta = richiesta_resp.data
         if not richiesta:
             return {"errore": "Richiesta non trovata"}
+
+        verifica = verifica_checklist_completa("evento", richiesta_id)
+        if "errore" in verifica:
+            return verifica
+        if not verifica["completa"]:
+            return {"errore": f"Adempimenti mancanti prima dell'approvazione: {', '.join(verifica['mancanti'])}"}
 
         evento_esistente_resp = supabase.table("eventi_locali").select("*") \
             .eq("richiesta_evento_id", richiesta_id).execute()
@@ -5637,3 +5654,48 @@ def endpoint_get_statistiche_appalti(comune_id: str):
 @app.get("/appalti-storico/{comune_id}")
 def endpoint_get_storico_schede(comune_id: str):
     return get_storico_schede(comune_id)
+
+
+@app.post("/adempimenti")
+def endpoint_crea_adempimento(payload: dict):
+    return crea_adempimento(payload)
+
+
+@app.get("/adempimenti/{tipo_origine}/{origine_id}")
+def endpoint_get_checklist(tipo_origine: str, origine_id: int):
+    return get_checklist(tipo_origine, origine_id)
+
+
+@app.put("/adempimenti/{adempimento_id}/stato")
+def endpoint_aggiorna_stato_adempimento(adempimento_id: int, payload: dict):
+    return aggiorna_stato_adempimento(adempimento_id, payload.get("stato"))
+
+
+@app.put("/adempimenti/{adempimento_id}/documento")
+def endpoint_salva_documento_adempimento(adempimento_id: int, payload: dict):
+    return salva_documento_adempimento(adempimento_id, payload.get("file_path"), payload.get("file_nome"))
+
+
+@app.delete("/adempimenti/{adempimento_id}/documento")
+def endpoint_elimina_documento_adempimento(adempimento_id: int):
+    return elimina_documento_adempimento(adempimento_id)
+
+
+@app.delete("/adempimenti/{adempimento_id}")
+def endpoint_elimina_adempimento(adempimento_id: int):
+    return elimina_adempimento(adempimento_id)
+
+
+@app.get("/adempimenti-verifica/{tipo_origine}/{origine_id}")
+def endpoint_verifica_checklist_completa(tipo_origine: str, origine_id: int):
+    return verifica_checklist_completa(tipo_origine, origine_id)
+
+
+@app.get("/adempimenti-scadenziario/{comune_id}")
+def endpoint_get_scadenziario(comune_id: str):
+    return get_scadenziario(comune_id)
+
+
+@app.get("/adempimenti-statistiche/{comune_id}")
+def endpoint_get_statistiche_adempimenti(comune_id: str):
+    return get_statistiche_adempimenti(comune_id)

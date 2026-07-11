@@ -3,6 +3,7 @@ from datetime import datetime
 from supabase import create_client
 import os
 from dotenv import load_dotenv
+from adempimenti_service import verifica_checklist_completa
 
 load_dotenv()
 
@@ -108,6 +109,11 @@ def cambia_stato_mercato(mercato_id, nuovo_stato):
 
         aggiornamento = {"stato": nuovo_stato}
         if nuovo_stato == "approvato":
+            verifica = verifica_checklist_completa("mercato", mercato_id)
+            if "errore" in verifica:
+                return verifica
+            if not verifica["completa"]:
+                return {"errore": f"Adempimenti mancanti prima dell'approvazione: {', '.join(verifica['mancanti'])}"}
             aggiornamento["data_approvazione"] = datetime.now().isoformat()
         if nuovo_stato == "completato":
             aggiornamento["data_completamento"] = datetime.now().isoformat()
