@@ -2960,6 +2960,73 @@ def aggiorna_identikit_destinazione(payload: dict):
         print(f"Errore aggiornamento identikit destinazione: {e}")
         return {"errore": str(e)}
 
+
+@app.get("/questionari-accoglienza-statistiche/{comune_id}")
+def get_statistiche_questionari_accoglienza(comune_id: str):
+    try:
+        resp = supabase.table("questionari_accoglienza").select("*").eq("comune_id", comune_id).execute()
+        questionari = resp.data or []
+        n_totale = len(questionari)
+
+        if n_totale == 0:
+            return {
+                "comune_id": comune_id,
+                "n_totale": 0,
+                "media_soddisfazione": None,
+                "n_gadget_consegnati": 0,
+                "per_motivo_visita": [],
+                "per_mezzo_trasporto": [],
+                "per_valutazione_accoglienza": [],
+            }
+
+        conteggio_motivo = {}
+        for q in questionari:
+            motivo = q.get("motivo_visita")
+            if motivo:
+                conteggio_motivo[motivo] = conteggio_motivo.get(motivo, 0) + 1
+        per_motivo_visita = [
+            {"motivo": m, "conteggio": c}
+            for m, c in sorted(conteggio_motivo.items(), key=lambda x: x[1], reverse=True)
+        ]
+
+        conteggio_trasporto = {}
+        for q in questionari:
+            mezzo = q.get("mezzo_trasporto")
+            if mezzo:
+                conteggio_trasporto[mezzo] = conteggio_trasporto.get(mezzo, 0) + 1
+        per_mezzo_trasporto = [
+            {"mezzo": m, "conteggio": c}
+            for m, c in sorted(conteggio_trasporto.items(), key=lambda x: x[1], reverse=True)
+        ]
+
+        conteggio_valutazione = {}
+        for q in questionari:
+            valutazione = q.get("valutazione_accoglienza")
+            if valutazione:
+                conteggio_valutazione[valutazione] = conteggio_valutazione.get(valutazione, 0) + 1
+        per_valutazione_accoglienza = [
+            {"valutazione": v, "conteggio": c} for v, c in conteggio_valutazione.items()
+        ]
+
+        indici = [q["indice_soddisfazione"] for q in questionari if q.get("indice_soddisfazione") is not None]
+        media_soddisfazione = round(sum(indici) / len(indici), 1) if indici else None
+
+        n_gadget = len([q for q in questionari if q.get("gadget_consegnato")])
+
+        return {
+            "comune_id": comune_id,
+            "n_totale": n_totale,
+            "media_soddisfazione": media_soddisfazione,
+            "n_gadget_consegnati": n_gadget,
+            "per_motivo_visita": per_motivo_visita,
+            "per_mezzo_trasporto": per_mezzo_trasporto,
+            "per_valutazione_accoglienza": per_valutazione_accoglienza,
+        }
+    except Exception as e:
+        print(f"Errore statistiche questionari accoglienza comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
 def esegui_snapshot_indicatori(comune_id):
     indicatori = get_indicatori_standard(comune_id)
     if "errore" in indicatori:
