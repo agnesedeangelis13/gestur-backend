@@ -172,6 +172,7 @@ from adempimenti_service import (
     get_scadenziario,
     get_statistiche_adempimenti,
 )
+from macroambiente_service import get_indice_vulnerabilita_macroambiente
 load_dotenv()
 
 app = FastAPI()
@@ -5016,6 +5017,21 @@ def genera_raccomandazioni_azioni(comune_id):
                     "dato_sottostante": o.get("dato_sottostante", ""),
                 })
 
+    macroambiente = get_indice_vulnerabilita_macroambiente(comune_id)
+    if "errore" not in macroambiente and macroambiente["livello"] in ("moderato", "critico"):
+        codici_da_proporre = []
+        if macroambiente.get("componente_digitale") is not None and macroambiente["componente_digitale"] >= SOGLIA_PCT_DEBOLEZZA:
+            codici_da_proporre.extend(["SE-02", "SE-07"])
+        if macroambiente.get("componente_climatico") is not None and macroambiente["componente_climatico"] >= SOGLIA_PCT_DEBOLEZZA:
+            codici_da_proporre.append("T-08")
+        for codice in codici_da_proporre:
+            raccomandazioni.append({
+                "codice_azione_tipo": codice,
+                "azione": AZIONI_TIPO_MAP[codice],
+                "segnale": "macroambiente_vulnerabilita",
+                "dato_sottostante": macroambiente["messaggio"],
+            })
+
     return raccomandazioni
 
 
@@ -5028,10 +5044,11 @@ def get_raccomandazioni_azioni(comune_id: str):
             "n_raccomandazioni": len(raccomandazioni),
             "raccomandazioni": raccomandazioni,
             "nota_metodologica": (
-                "Le raccomandazioni derivano da 5 segnali gia calcolati altrove in GesTur: indice di "
+                "Le raccomandazioni derivano da 6 segnali gia calcolati altrove in GesTur: indice di "
                 "concentrazione weekend critico, quota di segnalazioni di accessibilita sopra soglia, "
                 "categorie del radar Welfare e Innovazione senza iniziative attive, cali di affluenza "
-                "previsti dal modello SARIMAX a 6 mesi, e obiettivi di mandato in semaforo rosso. Ogni "
+                "previsti dal modello SARIMAX a 6 mesi, obiettivi di mandato in semaforo rosso, e indice di "
+                "vulnerabilita macroambientale (economico, climatico, digitale) sopra soglia. Ogni "
                 "raccomandazione riporta il dato che l'ha generata: non sono suggerimenti generici."
             ),
         }
@@ -5768,3 +5785,8 @@ def endpoint_get_scadenziario(comune_id: str):
 @app.get("/adempimenti-statistiche/{comune_id}")
 def endpoint_get_statistiche_adempimenti(comune_id: str):
     return get_statistiche_adempimenti(comune_id)
+
+
+@app.get("/macroambiente/{comune_id}")
+def endpoint_get_indice_vulnerabilita_macroambiente(comune_id: str):
+    return get_indice_vulnerabilita_macroambiente(comune_id)
