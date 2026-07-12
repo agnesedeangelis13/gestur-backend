@@ -4,31 +4,44 @@ from datetime import date
 from supabase import create_client
 
 supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
-OWM_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
 
-def classifica_condizione(weather_id: int) -> str:
-    if weather_id < 300: return "temporale"
-    elif weather_id < 600: return "pioggia"
-    elif weather_id < 700: return "neve"
-    elif weather_id < 800: return "nebbia"
-    elif weather_id == 800: return "sole"
-    else: return "nuvoloso"
+def classifica_condizione(codice_wmo: int) -> str:
+    if codice_wmo in (95, 96, 99):
+        return "temporale"
+    elif codice_wmo in (71, 73, 75, 77, 85, 86):
+        return "neve"
+    elif codice_wmo in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82):
+        return "pioggia"
+    elif codice_wmo in (45, 48):
+        return "nebbia"
+    elif codice_wmo == 0:
+        return "sole"
+    else:
+        return "nuvoloso"
 
 async def fetch_meteo_per_sito(sito_id: int, lat: float, lon: float):
-    url = f"https://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={OWM_API_KEY}&units=metric"
+    url = "https://api.open-meteo.com/v1/forecast"
+    parametri = {
+        "latitude": lat,
+        "longitude": lon,
+        "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
+        "timezone": "Europe/Rome",
+        "forecast_days": 1,
+    }
     async with httpx.AsyncClient() as client:
-        resp = await client.get(url, timeout=10)
+        resp = await client.get(url, params=parametri, timeout=10)
         resp.raise_for_status()
         dati = resp.json()
-    
+
+    giornaliero = dati.get("daily", {})
     record = {
         "sito_id": sito_id,
         "data": str(date.today()),
-        "temperatura_max": dati["main"]["temp_max"],
-        "temperatura_min": dati["main"]["temp_min"],
-        "precipitazioni_mm": dati.get("rain", {}).get("1h", 0),
-        "condizione": classifica_condizione(dati["weather"][0]["id"]),
-        "fonte": "openweathermap"
+        "temperatura_max": giornaliero["temperature_2m_max"][0],
+        "temperatura_min": giornaliero["temperature_2m_min"][0],
+        "precipitazioni_mm": giornaliero.get("precipitation_sum", [0])[0] or 0,
+        "condizione": classifica_condizione(giornaliero["weather_code"][0]),
+        "fonte": "open-meteo",
     }
     supabase.table("meteo_giornaliero").upsert(record, on_conflict="sito_id,data").execute()
     return record
