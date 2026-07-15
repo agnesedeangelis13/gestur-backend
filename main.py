@@ -4449,7 +4449,7 @@ def crea_nota_marketing(payload: dict):
         if not comune_id_str or not sezione or not testo or not testo.strip():
             return {"errore": "comune_id, sezione e testo sono obbligatori"}
 
-        if sezione not in ("prezzo", "distribuzione_trend", "distribuzione_scenari"):
+        if sezione not in ("prezzo", "distribuzione_trend", "distribuzione_scenari", "persone", "processi", "evidenza_fisica"):
             return {"errore": "Sezione non valida"}
 
         piano = ottieni_o_crea_piano_attivo(comune_id_str)
@@ -4811,6 +4811,138 @@ def get_marketing_mix_distribuzione(comune_id: str):
         }
     except Exception as e:
         print(f"Errore marketing mix distribuzione comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/marketing-mix-persone/{comune_id}")
+def get_marketing_mix_persone(comune_id: str):
+    try:
+        richieste_resp = supabase.table("richieste_pit").select("esito, sentiment").eq("comune_id", comune_id).execute()
+        richieste = richieste_resp.data or []
+
+        totale = len(richieste)
+        soddisfatte = len([r for r in richieste if r.get("esito") == "soddisfatta"])
+        parziali = len([r for r in richieste if r.get("esito") == "parziale"])
+        non_disponibili = len([r for r in richieste if r.get("esito") == "non_disponibile"])
+        tasso_soddisfazione = round((soddisfatte / totale) * 100, 1) if totale > 0 else None
+
+        conteggio_sentiment = {}
+        for r in richieste:
+            s = r.get("sentiment")
+            if s:
+                conteggio_sentiment[s] = conteggio_sentiment.get(s, 0) + 1
+
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+        note_resp = supabase.table("note_marketing_mix").select("*") \
+            .eq("piano_id", piano["id"]).eq("sezione", "persone").order("inserito_il", desc=True).execute()
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "n_interazioni_pit": totale,
+            "tasso_soddisfazione_pct": tasso_soddisfazione,
+            "n_soddisfatte": soddisfatte,
+            "n_parziali": parziali,
+            "n_non_disponibili": non_disponibili,
+            "sentiment": conteggio_sentiment,
+            "note": note_resp.data or [],
+            "nota_metodologica": (
+                "Il fattore \"Persone\" del marketing dei servizi riguarda la qualita del personale a contatto "
+                "con il turista. Qui viene richiamato il tasso di soddisfazione e il sentiment gia calcolati "
+                "dalle interazioni del Punto Informativo Turistico (Dashboard PIT), come proxy oggettivo della "
+                "qualita del front-line, senza ricalcolare nulla. Le note qualitative sottostanti servono per "
+                "considerazioni su formazione, organico e competenze del personale."
+            )
+        }
+    except Exception as e:
+        print(f"Errore marketing mix persone comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/marketing-mix-processi/{comune_id}")
+def get_marketing_mix_processi(comune_id: str):
+    try:
+        adempimenti = get_statistiche_adempimenti(comune_id)
+        appalti = get_statistiche_appalti(comune_id)
+
+        tasso_completamento_adempimenti = None
+        if "errore" not in adempimenti and adempimenti.get("n_totale"):
+            tasso_completamento_adempimenti = round((adempimenti["n_completati"] / adempimenti["n_totale"]) * 100, 1)
+
+        tasso_conferma_schede = None
+        if "errore" not in appalti and appalti.get("n_schede_totali"):
+            tasso_conferma_schede = round((appalti["n_schede_confermate"] / appalti["n_schede_totali"]) * 100, 1)
+
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+        note_resp = supabase.table("note_marketing_mix").select("*") \
+            .eq("piano_id", piano["id"]).eq("sezione", "processi").order("inserito_il", desc=True).execute()
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "adempimenti_riepilogo": {
+                "n_totale": adempimenti.get("n_totale"),
+                "n_scaduti": adempimenti.get("n_scaduti"),
+                "n_documenti_mancanti": adempimenti.get("n_documenti_mancanti"),
+                "tasso_completamento_pct": tasso_completamento_adempimenti,
+            } if "errore" not in adempimenti else None,
+            "appalti_riepilogo": {
+                "n_schede_totali": appalti.get("n_schede_totali"),
+                "n_schede_bozza": appalti.get("n_schede_bozza"),
+                "margine_netto_totale": appalti.get("margine_netto_totale"),
+                "tasso_conferma_pct": tasso_conferma_schede,
+            } if "errore" not in appalti else None,
+            "note": note_resp.data or [],
+            "nota_metodologica": (
+                "Il fattore \"Processi\" del marketing dei servizi riguarda l'efficienza organizzativa che sta "
+                "dietro l'esperienza del turista. Qui vengono richiamati il tasso di completamento degli "
+                "adempimenti burocratici (Adempimenti Burocratici) e il tasso di conferma delle schede tecniche "
+                "logistiche (Appalti, Fornitori e Logistica), come indicatori oggettivi di fluidita dei processi, "
+                "senza ricalcolare nulla. Le note qualitative servono per considerazioni su tempi e procedure."
+            )
+        }
+    except Exception as e:
+        print(f"Errore marketing mix processi comune {comune_id}: {e}")
+        return {"errore": str(e)}
+
+
+@app.get("/marketing-mix-evidenza-fisica/{comune_id}")
+def get_marketing_mix_evidenza_fisica(comune_id: str):
+    try:
+        macroambiente = get_indice_vulnerabilita_macroambiente(comune_id)
+
+        richieste_resp = supabase.table("richieste_pit").select("materiale_mancante").eq("comune_id", comune_id).execute()
+        richieste = richieste_resp.data or []
+        conteggio_materiale_mancante = {}
+        for r in richieste:
+            mat = (r.get("materiale_mancante") or "").strip()
+            if mat:
+                conteggio_materiale_mancante[mat] = conteggio_materiale_mancante.get(mat, 0) + 1
+        materiali_mancanti_top = sorted(conteggio_materiale_mancante.items(), key=lambda x: x[1], reverse=True)[:5]
+
+        piano = ottieni_o_crea_piano_attivo(comune_id)
+        note_resp = supabase.table("note_marketing_mix").select("*") \
+            .eq("piano_id", piano["id"]).eq("sezione", "evidenza_fisica").order("inserito_il", desc=True).execute()
+
+        return {
+            "piano_id": piano["id"],
+            "comune_id": comune_id,
+            "digitalizzazione_riepilogo": {
+                "pct_preferenza_cartaceo_comune": macroambiente.get("dettaglio_digitale", {}).get("pct_preferenza_cartaceo_comune"),
+                "pct_preferenza_digitale_comune": macroambiente.get("dettaglio_digitale", {}).get("pct_preferenza_digitale_comune"),
+            } if "errore" not in macroambiente else None,
+            "materiali_mancanti_piu_segnalati": [{"materiale": m, "conteggio": c} for m, c in materiali_mancanti_top],
+            "note": note_resp.data or [],
+            "nota_metodologica": (
+                "Il fattore \"Evidenza Fisica\" del marketing dei servizi riguarda gli elementi tangibili che "
+                "influenzano la percezione del turista: materiali informativi, segnaletica, presidio digitale. "
+                "Qui vengono richiamati il tasso di digitalizzazione gia calcolato in Macroambiente e i materiali "
+                "piu spesso segnalati come mancanti al Punto Informativo, senza ricalcolare nulla. Le note "
+                "qualitative servono per considerazioni su decoro, segnaletica e materiali fisici del territorio."
+            )
+        }
+    except Exception as e:
+        print(f"Errore marketing mix evidenza fisica comune {comune_id}: {e}")
         return {"errore": str(e)}
 
 @app.get("/profilo-visitatore/{comune_id}")
