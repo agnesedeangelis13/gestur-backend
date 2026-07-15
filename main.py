@@ -173,6 +173,7 @@ from adempimenti_service import (
     get_statistiche_adempimenti,
 )
 from macroambiente_service import get_indice_vulnerabilita_macroambiente
+from posizionamento_service import get_mappa_posizionamento
 load_dotenv()
 
 app = FastAPI()
@@ -5790,3 +5791,8 @@ def endpoint_get_statistiche_adempimenti(comune_id: str):
 @app.get("/macroambiente/{comune_id}")
 def endpoint_get_indice_vulnerabilita_macroambiente(comune_id: str):
     return get_indice_vulnerabilita_macroambiente(comune_id)
+
+
+@app.get("/posizionamento-mappa/{comune_id}")
+def endpoint_get_mappa_posizionamento(comune_id: str):
+    return get_mappa_posizionamento(comune_id)
